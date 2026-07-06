@@ -34,7 +34,7 @@ func init() {
 	rootCmd.AddCommand(explainCmd)
 
 	explainCmd.Flags().BoolVarP(&explainVerbose, "verbose", "v", false, "show detailed explanation")
-	explainCmd.Flags().BoolVarP(&explainDangerous, "dangerous", "d", false, "show dangerous command warnings")
+	explainCmd.Flags().BoolVar(&explainDangerous, "dangerous", false, "show dangerous command warnings")
 }
 
 func runExplain(cmd *cobra.Command, args []string) error {
