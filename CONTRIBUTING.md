@@ -211,7 +211,7 @@ What you expected to happen.
 **Environment:**
 - OS: [e.g., Windows 11, Ubuntu 22.04]
 - Go version: [e.g., 1.25.0]
-- WUT version: [e.g., v0.3.0]
+- WUT version: [e.g., v1.0.0]
 
 **Additional context**
 Any other relevant information.

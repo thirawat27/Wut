@@ -12,7 +12,7 @@ import (
 
 var (
 	// Version is set during build via ldflags
-	Version = "0.3.0"
+	Version = "1.0.0"
 	// BuildTime is set during build via ldflags
 	BuildTime = "unknown"
 	// Commit is set during build via ldflags

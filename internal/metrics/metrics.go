@@ -71,7 +71,7 @@ func Initialize(version, commit string) *Metrics {
 // Get returns the global metrics instance
 func Get() *Metrics {
 	if globalMetrics == nil {
-		return Initialize("0.3.0", "unknown")
+		return Initialize("1.0.0", "unknown")
 	}
 	return globalMetrics
 }

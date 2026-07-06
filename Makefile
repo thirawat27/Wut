@@ -6,7 +6,7 @@ BINARY_NAME=wut
 PACKAGE=github.com/thirawat27/wut
 
 # Version info
-VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "0.3.0")
+VERSION=$(shell git describe --tags --always --dirty 2>/dev/null || echo "1.0.0")
 BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S' 2>/dev/null || echo "unknown")
 COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_HOST=$(shell hostname 2>/dev/null || echo "unknown")

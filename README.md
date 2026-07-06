@@ -114,7 +114,7 @@ All installation scripts support these options:
 
 | Option (Linux/macOS) | Option (Windows) | Description | Example |
 |---------------------|------------------|-------------|---------|
-| `--version` | `-Version` | Install specific version | `--version v0.3.0` |
+| `--version` | `-Version` | Install specific version | `--version v1.0.0` |
 | `--no-init` | `-NoInit` | Skip automatic initialization | `--no-init` |
 | `--no-shell` | `-NoShell` | Skip shell integration | `--no-shell` |
 | `--force` | `-Force` | Overwrite existing installation | `--force` |
@@ -123,10 +123,10 @@ All installation scripts support these options:
 Example with options:
 ```bash
 # Linux/macOS/BSD
-curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | bash -s -- --version v0.3.0 --no-init
+curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | bash -s -- --version v1.0.0 --no-init
 
 # Windows
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.ps1))) -Version v0.3.0 -NoInit
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.ps1))) -Version v1.0.0 -NoInit
 ```
 
 ### Docker
