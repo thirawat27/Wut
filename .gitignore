@@ -18,7 +18,6 @@ coverage.out
 
 # Go specific
 vendor/
-go.sum
 
 # IDE
 .idea/
