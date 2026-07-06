@@ -45,7 +45,7 @@ Options:
     -f, --force         Skip overwrite confirmation
     --uninstall         Remove the installed binary
     --no-init           Skip automatic `wut init --quick`
-    --no-shell          Skip shell hook installation during init
+    --no-shell          Skip shell hook installation during init (default: skipped)
     -h, --help          Show this message
 
 Examples:
@@ -182,8 +182,9 @@ run_quick_init() {
         return
     fi
 
-    local args=(init --quick)
+    local args=(init --quick --skip-shell)
     if [ "$NO_SHELL" = true ]; then
+        # Kept for backwards compatibility; --skip-shell is now the default.
         args+=(--skip-shell)
     fi
 

@@ -13,6 +13,7 @@ import (
 func init() {
 	// Add shortcut commands
 	rootCmd.AddCommand(suggestShortcutCmd())
+	rootCmd.AddCommand(terminalShortcutCmd())
 	rootCmd.AddCommand(historyShortcutCmd())
 	rootCmd.AddCommand(explainShortcutCmd())
 	rootCmd.AddCommand(aliasShortcutCmd())
@@ -34,6 +35,19 @@ func executeMainCommand(args ...string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// terminalShortcutCmd creates 't' as a shortcut for 'terminal'
+func terminalShortcutCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "t",
+		Short:   "Shortcut for 'terminal'",
+		Long:    `Quick shortcut to open WUT as a standalone terminal. Same as 'wut terminal'.`,
+		Example: `  wut t`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return executeMainCommand("terminal")
+		},
+	}
 }
 
 // suggestShortcutCmd creates 's' as a shortcut for 'suggest'

@@ -64,7 +64,7 @@ var (
 				fmt.Println()
 				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#10B981")).Bold(true).Render("    wut init"))
 				fmt.Println()
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).Render("  This will configure your settings, install shell integration,"))
+				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).Render("  This will configure your settings, optionally set up shell integration,"))
 				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).Render("  and download the command database — all in one step."))
 				fmt.Println()
 				os.Exit(1)

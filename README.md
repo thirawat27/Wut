@@ -17,7 +17,7 @@
 
 ---
 
-**WUT** is an intelligent command-line assistant that transforms how you work in the terminal. It suggests commands based on context, fixes typos instantly, explains complex operations, and learns from your workflow—all while keeping your data private and local.
+**WUT** is a standalone command-line assistant that runs as its own terminal application. Launch it with `wut terminal` (or `wut t`), search commands, fix typos, and execute—all without touching your shell config. Optional shell key bindings are available if you want them, but WUT works out of the box as a separate terminal tool.
 
 ## Table of Contents
 
@@ -25,19 +25,22 @@
 - [Installation](#installation)
 - [Getting Started](#getting-started)
 - [Command Reference](#command-reference)
+  - [Terminal](#1-terminal-command)
+  - [Suggest](#2-suggest-command)
 - [Configuration](#configuration)
 - [Advanced Usage](#advanced-usage)
 - [Troubleshooting](#troubleshooting)
 
 ## Key Features
 
+- **Standalone Terminal App**: Launch with `wut terminal` or `wut t`—no shell hooks required
 - **Smart Command Suggestions**: Context-aware command recommendations based on your project type and history
 - **Typo Correction**: Detect and fix typos across the **entire command sentence** (not just the first word)
 - **Undo Assistant**: Instantly suggests how to revert your last command with `wut undo`
 - **Command Explanations**: Get detailed breakdowns of what commands do and their potential risks
 - **Command Database**: Quick access to practical command examples from the command database
 - **History Tracking**: Learn from your command usage patterns
-- **Shell Integration**: Quick access via keyboard shortcuts (Ctrl+Space)
+- **Optional Shell Integration**: Add key bindings later with `wut install` if you want them
 - **Cross-Platform**: Works on Windows, macOS, Linux, and BSD systems (FreeBSD, OpenBSD, NetBSD)
 - **Privacy-Focused**: All processing happens locally on your machine
 
@@ -167,7 +170,7 @@ sudo mv wut /usr/local/bin/
 
 ### Initial Setup
 
-After installation, run the initialization command:
+After installation, run the initialization command once:
 
 ```bash
 # Interactive setup (recommended for first-time users)
@@ -175,58 +178,70 @@ wut init
 
 # Quick setup with defaults
 wut init --quick
-
-# Setup options
-wut init --skip-tldr      # Skip TLDR pages download
-wut init --skip-shell     # Skip shell integration
-wut init --no-tui         # Use simple text interface (no TUI)
-
-# Specify shell type
-wut init --shell zsh
-wut init --shell bash
-wut init --shell fish
-wut init --shell powershell
 ```
+
+`wut init` only creates configuration directories and preferences. It does not
+modify your shell config unless you explicitly choose to install shell
+integration during setup.
 
 The initialization process will:
 1. Create configuration directories
 2. Set up your preferred theme
-3. Detect and configure shell integration
+3. Optionally set up shell integration (opt-in; no hooks are installed without your consent)
 4. Optionally download a curated offline command database with `wut db sync`
 
 ### Shell Integration
 
-Enable keyboard shortcuts and enhanced features:
+Shell integration is **opt-in**. WUT will never modify your shell config
+automatically during installation or initialization unless you explicitly ask
+for it. The integration is intentionally minimal: it adds keyboard shortcuts
+and helper commands, but does **not** replace your shell's command-not-found
+handler or prompt function.
+
+Before modifying anything, WUT creates a timestamped backup of your shell
+config that can be restored with `wut install --uninstall`.
+
+Enable keyboard shortcuts and helper commands:
 
 ```bash
-# Auto-detect your shell and install integration
+# Install for the detected active shell (asks for confirmation)
 wut install
 
 # Install for a specific shell
 wut install --shell bash
 wut install --shell zsh
 wut install --shell fish
+wut install --shell powershell
+
+# Preview changes without modifying anything
+wut install --shell bash --dry-run
 
 # Install for all detected shells
-wut install --all
+wut install --all --yes
+
+# Skip confirmation prompts
+wut install --yes
 ```
 
 After installation, these keyboard shortcuts will be available:
 - **Ctrl+Space**: Open WUT interactive mode
 - **Ctrl+G**: Open WUT with the current command line pre-filled
+- **oops** / **again**: Show WUT's correction for the last command
 
-To remove shell integration:
+To remove shell integration and restore the latest backup:
 ```bash
-wut install --uninstall
+wut install --uninstall --shell bash
+wut install --uninstall --all
 ```
 
 ### First Commands
 
-Try these commands to get familiar with WUT:
+WUT works as a standalone terminal app. Try these:
 
 ```bash
-# Get command suggestions interactively
-wut suggest
+# Open the WUT terminal (interactive TUI)
+wut terminal
+wut t                      # Shortcut
 
 # Search for a specific command
 wut suggest git
@@ -249,6 +264,7 @@ WUT provides convenient shortcuts for faster typing:
 
 | Shortcut | Full Command | Description |
 |----------|--------------|-------------|
+| `wut t` | `wut terminal` | Open WUT as a standalone terminal |
 | `wut s` | `wut suggest` | Get command suggestions |
 | `wut h` | `wut history` | View command history |
 | `wut x` | `wut explain` | Explain a command |
@@ -260,7 +276,21 @@ WUT provides convenient shortcuts for faster typing:
 | `wut b` | `wut bookmark` | Manage bookmarks |
 | `wut undo` | `wut undo` | Revert your last command |
 
-### 1. Suggest Command
+### 1. Terminal Command
+
+Open WUT as a standalone terminal application. This is the recommended way to
+use WUT because it does not require any shell integration.
+
+```bash
+# Open the interactive WUT terminal
+wut terminal
+wut t
+```
+
+The terminal launches a full-screen TUI where you can search commands, browse
+examples, and execute commands directly.
+
+### 2. Suggest Command
 
 Get command suggestions and examples from the command database.
 
@@ -295,7 +325,7 @@ wut suggest git --exec
 - Enter to view detailed examples
 - Esc to exit
 
-### 2. Fix Command
+### 3. Fix Command
 
 Automatically detect and correct typos in commands. WUT analyzes the **entire command sentence**, not just the first word, finding and fixing all misspelled tokens in a single pass.
 
@@ -333,7 +363,7 @@ WUT tokenizes the full command and runs each token through:
 - `npn isntall` → `npm install`
 - And many more across git, docker, kubectl, terraform...
 
-### 3. Explain Command
+### 4. Explain Command
 
 Get detailed explanations of what commands do, including warnings for dangerous operations.
 
@@ -357,7 +387,7 @@ wut explain "rm -rf /" --dangerous
 - Alternative commands
 - Helpful tips
 
-### 4. Smart Command
+### 5. Smart Command
 
 Get intelligent, context-aware suggestions based on your project type and command history.
 
@@ -387,7 +417,7 @@ WUT automatically detects your project type and provides relevant suggestions:
 - **Docker projects**: `docker-compose up`, `docker build`
 - **Git repositories**: Branch info, commit status, push/pull suggestions
 
-### 5. History Command
+### 6. History Command
 
 Track and analyze your command usage patterns.
 
@@ -416,7 +446,7 @@ wut h --clear
 wut h --export history.json
 ```
 
-### 6. Alias Command
+### 7. Alias Command
 
 Manage command aliases for frequently used commands.
 
@@ -436,7 +466,7 @@ wut a --generate
 wut a --apply
 ```
 
-### 7. Config Command
+### 8. Config Command
 
 Manage WUT configuration settings.
 
@@ -466,7 +496,7 @@ wut config --export backup.yaml
 wut config --import backup.yaml
 ```
 
-### 8. Database Command
+### 9. Database Command
 
 Manage the command database for offline use.
 
@@ -500,28 +530,33 @@ wut db update --offline
 wut db clear
 ```
 
-### 9. Install Command
+### 10. Install Command
 
-Manage shell integration.
+Manage shell integration safely.
 
 ```bash
-# Auto-detect and install for current shell
+# Install for the detected active shell (asks for confirmation)
 wut install
 
-# Install for specific shell
+# Install for a specific shell
 wut install --shell bash
 wut install --shell zsh
 wut install --shell fish
 wut install --shell powershell
 
-# Install for all detected shells
-wut install --all
+# Preview changes without modifying anything
+wut install --shell bash --dry-run
 
-# Uninstall shell integration
+# Install for all detected shells
+wut install --all --yes
+
+# Uninstall shell integration and restore the latest backup
 wut install --uninstall
+wut install --uninstall --shell bash
+wut install --uninstall --all
 ```
 
-### 10. Bookmark Command
+### 11. Bookmark Command
 
 Save and organize your favorite commands with labels and notes.
 
@@ -543,7 +578,7 @@ wut bookmark search docker
 wut b search git
 ```
 
-### 11. Stats Command
+### 12. Stats Command
 
 View WUT usage statistics and productivity metrics.
 
@@ -558,7 +593,7 @@ wut stats
 # - Productivity score
 ```
 
-### 12. Undo Command
+### 13. Undo Command
 
 Accidentally ran a command? `wut undo` looks at your recent history (or an explicit command you provide) and tells you exactly how to revert it.
 
@@ -832,9 +867,14 @@ sudo mv wut /usr/local/bin/
 #### Shell Integration Not Working
 
 ```bash
+# Check what would change before installing
+wut install --shell bash --dry-run
+
+# Remove integration and restore the latest backup
+wut install --uninstall --shell bash
+
 # Reinstall shell integration
-wut install --uninstall
-wut install
+wut install --shell bash
 
 # Reload shell configuration
 source ~/.bashrc  # Bash

@@ -6,6 +6,8 @@
 .DESCRIPTION
     Downloads and runs the official WUT setup installer from GitHub Releases.
     One-line install: irm https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.ps1 | iex
+    Shell integration is no longer enabled automatically; run
+    'wut install --shell <shell>' afterwards if you want key bindings.
 
 .PARAMETER Version
     Install specific version tag (e.g. v0.3.0). Default: latest
@@ -20,7 +22,8 @@
     Skip automatic `wut init --quick`.
 
 .PARAMETER NoShell
-    Skip shell hook installation during automatic init.
+    Skip shell hook installation during automatic init. Shell integration is
+    now disabled by default; use 'wut install --shell <shell>' after install.
 
 .PARAMETER Help
     Show this help message.
@@ -231,8 +234,9 @@ function Invoke-WutInit {
         return
     }
 
-    $args = @("init", "--quick")
+    $args = @("init", "--quick", "--skip-shell")
     if ($NoShell) {
+        # Kept for backwards compatibility; --skip-shell is now the default.
         $args += "--skip-shell"
     }
 

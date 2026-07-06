@@ -2,19 +2,20 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
-	"time"
 	"wut/internal/alias"
 	appctx "wut/internal/context"
 	"wut/internal/ui"
@@ -69,7 +70,25 @@ func runAlias(cmd *cobra.Command, args []string) error {
 
 	// Apply aliases to shell
 	if aliasApply {
-		return manager.ApplyToShell()
+		fmt.Printf("This will add WUT-managed aliases to your %s shell config.\n", shell)
+		fmt.Print("Continue? [y/N]: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			answer := strings.ToLower(strings.TrimSpace(scanner.Text()))
+			if answer != "y" && answer != "yes" {
+				fmt.Println("Cancelled.")
+				return nil
+			}
+		}
+		backupPath, err := manager.ApplyToShell()
+		if err != nil {
+			return err
+		}
+		if backupPath != "" {
+			fmt.Printf("✓ Backup created: %s\n", backupPath)
+		}
+		fmt.Println("✓ Aliases applied to shell config")
+		return nil
 	}
 
 	// Add alias

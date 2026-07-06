@@ -263,60 +263,64 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// ─── Step 3: Shell Integration (auto-install, merged from 'wut install') ──
+	// ─── Step 3: Shell Integration (opt-in only) ─────────────────────────────
 	if !initSkipShell {
 		activeShell := shell.DetectCurrentShell()
 		shellTargets := detectShellsForInit(initShell)
 
-		if !initQuick {
+		if initQuick {
+			// Quick setup never touches shell configs automatically.
+			fmt.Println("Shell integration skipped in quick mode. Run 'wut install --shell <shell>' to enable it.")
+		} else {
 			printStep("🐚", "Shell Integration")
 			displayShell := activeShell
 			if displayShell == "" && len(shellTargets) > 0 {
 				displayShell = shellTargets[0]
 			}
-			if activeShell != "" {
-				displayShell = activeShell
-			}
 			fmt.Printf("    Detected active shell: %s\n", valFmt(displayShell))
-			if len(shellTargets) > 0 {
-				fmt.Printf("    %s\n", lipgloss.NewStyle().Foreground(cGray).Render("Installing integration for: "+strings.Join(shellTargets, ", ")))
-			}
 			fmt.Println()
-			fmt.Printf("    %s\n\n", lipgloss.NewStyle().Foreground(cGray).Render("Installing key bindings, command-not-found hooks, and pro-tips..."))
-		}
+			descBox := lipgloss.NewStyle().
+				Border(lipgloss.NormalBorder(), false, false, false, true).
+				BorderForeground(cDarkGray).
+				PaddingLeft(2).
+				MarginLeft(4).
+				Foreground(cGray).
+				Render("WUT can add key bindings (Ctrl+Space, Ctrl+G) and\nsafe helper commands (oops, again) to your shell config.\nIt will not replace command-not-found handlers or your prompt.")
+			fmt.Println(descBox)
+			fmt.Println()
 
-		installedShells := 0
-		for _, shellType := range shellTargets {
-			if err := installShellIntegration(shellType); err != nil {
-				if initQuick {
-					fmt.Printf("Shell integration skipped for %s: %v\n", shellType, err)
-				}
-				if !initQuick {
-					if err.Error() == "already installed" {
-						printOK(fmt.Sprintf("%s hooks already installed", shellType))
-					} else {
-						printWarn(fmt.Sprintf("%s integration: %v", shellType, err))
+			if !askYN("Install shell integration now? [y/N]:", false) {
+				printOK("Shell integration skipped — run 'wut install --shell <shell>' later")
+			} else if len(shellTargets) == 0 {
+				printWarn("No installable shells detected")
+			} else {
+				installer := shell.NewInstaller()
+				installedShells := 0
+				for _, shellType := range shellTargets {
+					if _, err := installer.Install(shellType); err != nil {
+						if err.Error() == "already installed" {
+							printOK(fmt.Sprintf("%s hooks already installed", shellType))
+						} else {
+							printWarn(fmt.Sprintf("%s integration: %v", shellType, err))
+						}
+						continue
 					}
-				}
-				continue
-			}
 
-			installedShells++
-			if !initQuick {
-				printOK(fmt.Sprintf("%s hooks installed successfully", shellType))
-				reloadCmd := shell.GetReloadCommand(shellType, getShellRcFile(shellType))
-				if reloadCmd == "" {
-					reloadCmd = "restart your shell"
+					installedShells++
+					printOK(fmt.Sprintf("%s hooks installed successfully", shellType))
+					reloadCmd := shell.GetReloadCommand(shellType, getShellRcFile(shellType))
+					if reloadCmd == "" {
+						reloadCmd = "restart your shell"
+					}
+					fmt.Printf("      %s Type %s to apply immediately.\n",
+						lipgloss.NewStyle().Foreground(cPink).Render("→"),
+						lipgloss.NewStyle().Foreground(cWhite).Render(reloadCmd),
+					)
 				}
-				fmt.Printf("      %s Type %s to apply immediately.\n",
-					lipgloss.NewStyle().Foreground(cPink).Render("→"),
-					lipgloss.NewStyle().Foreground(cWhite).Render(reloadCmd),
-				)
+				if installedShells == 0 {
+					printWarn("Shell integration was not installed for any shell")
+				}
 			}
-		}
-
-		if initQuick && installedShells == 0 && len(shellTargets) == 0 {
-			fmt.Println("Shell integration skipped: no installable shells detected")
 		}
 	}
 
@@ -424,25 +428,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 // OS / Shell helpers
 
-func detectShellForInit() string {
-	if preferred := shell.DetectPreferredInstallShell(); preferred != "" {
-		return preferred
-	}
-	return "bash"
-}
-
 func detectShellsForInit(explicit string) []string {
 	if explicit = shell.CanonicalName(explicit); explicit != "" {
 		return []string{explicit}
 	}
 
-	shells := shell.DetectInstallableShells()
-	if len(shells) > 0 {
-		return shells
-	}
-
-	if fallback := detectShellForInit(); fallback != "" {
-		return []string{fallback}
+	// Only target the active/preferred shell by default to avoid touching
+	// every installed shell without explicit consent.
+	if preferred := shell.DetectPreferredInstallShell(); preferred != "" {
+		return []string{preferred}
 	}
 
 	return nil

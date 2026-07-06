@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"wut/internal/context"
 )
@@ -258,11 +259,12 @@ func (m *Manager) generateAliasName(parts []string) string {
 	return name.String()
 }
 
-// ApplyToShell applies aliases to shell configuration
-func (m *Manager) ApplyToShell() error {
+// ApplyToShell applies aliases to shell configuration. It creates a timestamped
+// backup of the shell config before modifying it.
+func (m *Manager) ApplyToShell() (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
+		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 
 	var configFile string
@@ -274,13 +276,18 @@ func (m *Manager) ApplyToShell() error {
 	case "fish":
 		configFile = filepath.Join(homeDir, ".config", "fish", "config.fish")
 	default:
-		return fmt.Errorf("unsupported shell: %s", m.shell)
+		return "", fmt.Errorf("unsupported shell: %s", m.shell)
 	}
 
 	// Read existing config
 	content, err := os.ReadFile(configFile)
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	backupPath, err := backupShellConfig(configFile, content)
+	if err != nil {
+		return "", fmt.Errorf("failed to back up shell config: %w", err)
 	}
 
 	// Check if wut aliases section exists
@@ -326,7 +333,31 @@ func (m *Manager) ApplyToShell() error {
 		newContent = strContent + "\n" + aliasesSection.String()
 	}
 
-	return os.WriteFile(configFile, []byte(newContent), 0644)
+	if err := os.WriteFile(configFile, []byte(newContent), 0644); err != nil {
+		return "", err
+	}
+	return backupPath, nil
+}
+
+// backupShellConfig writes a timestamped copy of path next to it.
+func backupShellConfig(path string, content []byte) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("empty config path")
+	}
+	if len(content) == 0 {
+		return "", nil
+	}
+
+	base := filepath.Base(path)
+	ext := filepath.Ext(base)
+	name := strings.TrimSuffix(base, ext)
+	timestamp := time.Now().Format("20060102-150405")
+	backupPath := filepath.Join(filepath.Dir(path), fmt.Sprintf("%s-%s-backup%s", name, timestamp, ext))
+
+	if err := os.WriteFile(backupPath, content, 0600); err != nil {
+		return "", err
+	}
+	return backupPath, nil
 }
 
 // isValidName checks if an alias name is valid
