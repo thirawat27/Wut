@@ -47,6 +47,9 @@ func showSmartSuggestions(query string, ctx *appctx.Context, suggestions []smart
 
 func newSmartListModel(query string, ctx *appctx.Context, suggestions []smart.Suggestion) smartListModel {
 	pageSize := 12
+	if len(suggestions) > 0 {
+		pageSize = max(5, min(20, len(suggestions)/3))
+	}
 	numPages := int(math.Ceil(float64(len(suggestions)) / float64(pageSize)))
 	if numPages == 0 {
 		numPages = 1
@@ -70,6 +73,17 @@ func (m smartListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Adapt page size to terminal height
+		if msg.Height > 0 {
+			m.pageSize = max(5, min(30, (msg.Height-10)/2))
+			m.numPages = int(math.Ceil(float64(len(m.suggestions)) / float64(m.pageSize)))
+			if m.numPages == 0 {
+				m.numPages = 1
+			}
+			if m.page >= m.numPages {
+				m.page = m.numPages - 1
+			}
+		}
 	case clearMsg:
 		m.msg = ""
 	case tea.KeyMsg:
@@ -128,12 +142,15 @@ func (m smartListModel) View() string {
 
 	w := m.width
 	if w <= 0 {
-		w = 100
+		w = 80
 	}
 
 	boxPadX := 2
 	if w < 60 {
 		boxPadX = 1
+	}
+	if w < 40 {
+		boxPadX = 0
 	}
 
 	boxWidth := w - 2
@@ -192,8 +209,8 @@ func (m smartListModel) View() string {
 	}
 
 	indexStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).Width(4).Align(lipgloss.Right)
-	showDesc := w >= 80
-	showSource := w >= 65
+	showDesc := w >= 70
+	showSource := w >= 55
 
 	availWidth := innerWidth - 7
 	if showSource {
@@ -243,12 +260,14 @@ func (m smartListModel) View() string {
 	sb.WriteString(footerStyle.Render(fmt.Sprintf("Page %d/%d", m.page+1, m.numPages)))
 
 	var footerNav string
-	if w >= 90 {
+	if w >= 80 {
 		footerNav = " | [↑/↓] Navigate | [←/→] Prev/Next Page | [c/enter] Copy | [q] Quit"
 	} else if w >= 60 {
 		footerNav = " | ↑/↓ nav | ←/→ page | c copy | q quit"
-	} else {
+	} else if w >= 40 {
 		footerNav = " | ↑/↓ | ←/→ | c | q"
+	} else {
+		footerNav = " | ↑↓ | ←→ | c | q"
 	}
 	sb.WriteString(metaStyle.Render(footerNav + "\n"))
 

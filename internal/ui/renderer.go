@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"wut/internal/config"
+	"golang.org/x/term"
 )
 
 // Capabilities represents terminal capabilities
@@ -21,14 +22,25 @@ type Capabilities struct {
 
 // Detect detects terminal capabilities
 func detectCapabilities() *Capabilities {
-	return &Capabilities{
+	caps := &Capabilities{
 		Supports256Colors: os.Getenv("TERM") != "dumb",
 		SupportsTrueColor: os.Getenv("COLORTERM") == "truecolor",
 		SupportsEmoji:     os.Getenv("LANG") != "C" && !strings.Contains(os.Getenv("TERM"), "linux"),
-		SupportsNerdFonts: false, // Conservative default
+		SupportsNerdFonts: false,
 		Width:             80,
 		Height:            24,
 	}
+
+	if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
+		if w > 0 {
+			caps.Width = w
+		}
+		if h > 0 {
+			caps.Height = h
+		}
+	}
+
+	return caps
 }
 
 // ShouldUseASCII returns true if terminal doesn't support Unicode

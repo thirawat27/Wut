@@ -155,7 +155,7 @@ func NewModel() *Model {
 	input := textinput.New()
 	input.Placeholder = "Search command (e.g., git, docker, npm)..."
 	input.Focus()
-	input.CharLimit = 50
+	input.CharLimit = 120
 	input.Width = 50
 
 	// Setup list
@@ -163,6 +163,7 @@ func NewModel() *Model {
 	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
 	l.Title = "Command Reference"
 	l.SetShowHelp(false)
+	l.SetShowStatusBar(false)
 	// Setup viewport
 	vp := viewport.New(0, 0)
 
@@ -222,34 +223,39 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 
-		// ── Responsive width calculations ─────────────────────────────────────
 		w := msg.Width
 		h := msg.Height
 
-		// Input width
 		inputW := w - 4
-		if inputW > 50 {
-			inputW = 50
-		} else if inputW < 10 {
+		if inputW > 120 {
+			inputW = 120
+		}
+		if inputW < 10 {
 			inputW = 10
 		}
 		m.input.Width = inputW
+		m.input.CharLimit = inputW
 
-		// List size
 		listH := h - 8
-		if listH < 5 {
-			listH = 5
+		if h < 15 {
+			listH = h - 5
+		}
+		if listH < 4 {
+			listH = 4
 		}
 		m.list.SetSize(w, listH)
 
-		// Viewport size
 		vpW := w - 4
 		if vpW < 10 {
 			vpW = 10
 		}
+
 		vpH := h - 10
-		if vpH < 5 {
-			vpH = 5
+		if h < 15 {
+			vpH = h - 6
+		}
+		if vpH < 4 {
+			vpH = 4
 		}
 		m.viewport.Width = vpW
 		m.viewport.Height = vpH
@@ -330,10 +336,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 			case "e", "enter":
-				// Execute current example
+				// Copy current example to clipboard then exit
 				if m.currentPage != nil && m.selectedExample < len(m.currentPage.Examples) {
 					cmd := cleanCommand(m.currentPage.Examples[m.selectedExample].Command)
-					m.executedCmd = cmd
+					if err := clipboard.WriteAll(cmd); err == nil {
+						m.selected = cmd
+					}
 					return m, tea.Quit
 				}
 
@@ -472,9 +480,15 @@ func (m *Model) searchView() string {
 	b.WriteString(m.list.View())
 
 	// Help
-	helpText := "enter: view • /: search • esc/q: quit"
-	if m.width < 50 {
-		helpText = "enter/open • /search • q: quit"
+	helpText := "enter: view • /: search • ↓↑: navigate • esc/q: quit"
+	if m.width < 80 {
+		helpText = "enter/open • /search • ↓↑ • esc/q"
+	}
+	if m.width < 55 {
+		helpText = "enter • / • ↓↑ • esc"
+	}
+	if m.width < 35 {
+		helpText = "/ • esc"
 	}
 	help := helpStyle.Render(helpText)
 	b.WriteString("\n")
@@ -520,12 +534,18 @@ func (m *Model) detailView() string {
 	}
 
 	// Footer
-	footerText := "↑/↓: select • pgup/pgdn: scroll • 1-9: jump • c: copy • e: run • esc: back"
-	if m.width < 70 {
-		footerText = "↑/↓: sel • pgup/pgdn: scroll • c: copy • e: run • esc: back"
+	footerText := "↑/↓: sel • pgup/pgdn: scroll • 1-9: jump • c: copy • e: copy+exit • esc: back"
+	if m.width < 100 {
+		footerText = "↑/↓: sel • pgup/pgdn • 1-9: jump • c: copy • e: copy+exit • esc: back"
 	}
-	if m.width < 45 {
-		footerText = "↑/↓ • pg • c • e • esc"
+	if m.width < 75 {
+		footerText = "↑/↓: sel • pgup/pgdn • 1-9 • c: copy • e: copy+exit • esc: back"
+	}
+	if m.width < 55 {
+		footerText = "↑/↓ • pgup/pgdn • 1-9 • c • e • esc"
+	}
+	if m.width < 35 {
+		footerText = "↑/↓ • c • e • esc"
 	}
 
 	footer := helpStyle.Render(footerText)
@@ -548,6 +568,15 @@ func (m *Model) renderPage(page *Page) string {
 	}
 
 	var b strings.Builder
+
+	contentWidth := m.viewport.Width - 2
+	if contentWidth < 10 {
+		contentWidth = 10
+	}
+
+	wrapCmd := func(cmd string) string {
+		return lipgloss.NewStyle().Width(contentWidth - 4).Render(cmd)
+	}
 
 	// Description
 	if page.Description != "" {
@@ -573,22 +602,17 @@ func (m *Model) renderPage(page *Page) string {
 			b.WriteString(exampleDescStyle.Render(ex.Description))
 			b.WriteString("\n")
 
-			// Command with selection highlight
 			cmdStyle := exampleCmdStyle
 			if i == m.selectedExample {
 				cmdStyle = selectedExampleStyle
 			}
-			b.WriteString(cmdStyle.Render(ex.Command))
+			b.WriteString(cmdStyle.Render(wrapCmd(ex.Command)))
 			b.WriteString("\n")
 		}
 	}
 
-	// Wrap content to fit viewport width and prevent horizontal overflow
-	contentWidth := m.viewport.Width - 2
-	if contentWidth < 10 {
-		contentWidth = 10
-	}
-	return lipgloss.NewStyle().Width(contentWidth).Render(b.String())
+	wrapper := lipgloss.NewStyle().Width(contentWidth)
+	return wrapper.Render(b.String())
 }
 
 // Selected returns the selected command
