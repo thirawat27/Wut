@@ -23,8 +23,8 @@ var terminalCmd = &cobra.Command{
 	Long: `Launch WUT in its own interactive terminal interface.
 
 This is the standalone way to use WUT: no shell hooks, no key bindings, and no
-modifications to your shell config. You can search commands, fix typos, and
-execute commands directly from the TUI.
+modifications to your shell config. You can search commands and fix typos
+directly from the TUI.
 
 If you prefer tighter integration, use 'wut install' to add optional shell
 key bindings after running 'wut init'.`,
@@ -89,14 +89,6 @@ func runTerminal(cmd *cobra.Command, args []string) error {
 	}
 
 	if m, ok := finalModel.(*db.Model); ok {
-		if executed := m.GetExecutedCommand(); executed != "" {
-			fmt.Printf("\n⚡ Executing: %s\n\n", executed)
-			if err := db.ExecuteCommand(executed); err != nil {
-				return fmt.Errorf("execution failed: %w", err)
-			}
-			return nil
-		}
-
 		selected := m.Selected()
 		if selected != "" {
 			fmt.Println(selected)

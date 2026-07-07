@@ -30,7 +30,6 @@ WUT will detect typos, dangerous commands, and suggest alternatives.`,
 var (
 	fixCopy      bool
 	fixList      bool
-	fixExec      bool
 	fixShellMode bool
 )
 
@@ -39,7 +38,6 @@ func init() {
 
 	fixCmd.Flags().BoolVarP(&fixCopy, "copy", "c", false, "copy corrected command to clipboard")
 	fixCmd.Flags().BoolVarP(&fixList, "list", "l", false, "list common typos")
-	fixCmd.Flags().BoolVarP(&fixExec, "exec", "e", false, "execute corrected command")
 	fixCmd.Flags().BoolVar(&fixShellMode, "shell", false, "output corrected command only for shell integration")
 	_ = fixCmd.Flags().MarkHidden("shell")
 }
@@ -160,13 +158,6 @@ func runFix(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to copy to clipboard: %w", err)
 		}
 		fmt.Printf("%s Copied to clipboard\n", ui.Success("✓"))
-	}
-
-	if fixExec && correction.Corrected != "" {
-		fmt.Printf("%s Executing: %s\n", ui.Success("✓"), ui.Green(correction.Corrected))
-		if err := db.ExecuteCommand(correction.Corrected); err != nil {
-			return fmt.Errorf("failed to execute corrected command: %w", err)
-		}
 	}
 
 	return nil

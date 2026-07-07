@@ -3,15 +3,13 @@
 package cmd
 
 import (
-	"os"
-	"os/exec"
+	"fmt"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 func init() {
-	// Add shortcut commands
 	rootCmd.AddCommand(suggestShortcutCmd())
 	rootCmd.AddCommand(terminalShortcutCmd())
 	rootCmd.AddCommand(historyShortcutCmd())
@@ -23,18 +21,13 @@ func init() {
 	rootCmd.AddCommand(smartShortcutCmd())
 }
 
-// executeMainCommand executes the main command using os.Exec
-func executeMainCommand(args ...string) error {
-	exe, err := os.Executable()
+func executeShortcutCommand(args ...string) error {
+	_, _, err := rootCmd.Find(args)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to find command %v: %w", args, err)
 	}
-
-	cmd := exec.Command(exe, args...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	rootCmd.SetArgs(args)
+	return rootCmd.Execute()
 }
 
 // terminalShortcutCmd creates 't' as a shortcut for 'terminal'
@@ -45,7 +38,7 @@ func terminalShortcutCmd() *cobra.Command {
 		Long:    `Quick shortcut to open WUT as a standalone terminal. Same as 'wut terminal'.`,
 		Example: `  wut t`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return executeMainCommand("terminal")
+			return executeShortcutCommand("terminal")
 		},
 	}
 }
@@ -59,8 +52,8 @@ func suggestShortcutCmd() *cobra.Command {
 		Example: `  wut s git
   wut s docker`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			allArgs := buildArgs(cmd, args, "suggest", []string{"raw", "quiet", "offline", "exec", "limit"})
-			return executeMainCommand(allArgs...)
+			allArgs := buildArgs(cmd, args, "suggest", []string{"raw", "quiet", "offline", "limit"})
+			return executeShortcutCommand(allArgs...)
 		},
 	}
 
@@ -68,7 +61,6 @@ func suggestShortcutCmd() *cobra.Command {
 	cmd.Flags().BoolP("raw", "r", false, "output raw text")
 	cmd.Flags().BoolP("quiet", "q", false, "quiet mode")
 	cmd.Flags().BoolP("offline", "o", false, "offline mode")
-	cmd.Flags().BoolP("exec", "e", false, "execute command")
 	cmd.Flags().IntP("limit", "l", 10, "maximum number of examples to show")
 
 	return cmd
@@ -84,7 +76,7 @@ func historyShortcutCmd() *cobra.Command {
   wut h --stats`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			allArgs := buildArgs(cmd, args, "history", []string{"stats", "clear", "import-shell", "limit", "search"})
-			return executeMainCommand(allArgs...)
+			return executeShortcutCommand(allArgs...)
 		},
 	}
 
@@ -106,7 +98,7 @@ func explainShortcutCmd() *cobra.Command {
 		Example: `  wut x "git rebase"
   wut x "rm -rf /"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return executeMainCommand(append([]string{"explain"}, args...)...)
+			return executeShortcutCommand(append([]string{"explain"}, args...)...)
 		},
 	}
 }
@@ -121,7 +113,7 @@ func aliasShortcutCmd() *cobra.Command {
   wut a --generate`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			allArgs := buildArgs(cmd, args, "alias", []string{"list", "generate", "add", "apply", "name", "command"})
-			return executeMainCommand(allArgs...)
+			return executeShortcutCommand(allArgs...)
 		},
 	}
 
@@ -170,7 +162,7 @@ func configShortcutCmd() *cobra.Command {
 				allArgs = append(allArgs, "--reset")
 			}
 
-			return executeMainCommand(allArgs...)
+			return executeShortcutCommand(allArgs...)
 		},
 	}
 
@@ -199,7 +191,7 @@ Available subcommands:
 		Example: `  wut d sync
   wut d status`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return executeMainCommand("db", "status")
+			return executeShortcutCommand("db", "status")
 		},
 	}
 
@@ -209,7 +201,7 @@ Available subcommands:
 		Short: "Sync command database",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			allArgs := buildArgs(cmd, args, "sync", []string{"all", "force", "offline"})
-			return executeMainCommand(append([]string{"db"}, allArgs...)...)
+			return executeShortcutCommand(append([]string{"db"}, allArgs...)...)
 		},
 	}
 	syncCmd.Flags().BoolP("all", "a", false, "sync all commands")
@@ -221,7 +213,7 @@ Available subcommands:
 		Use:   "status",
 		Short: "Show database status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return executeMainCommand("db", "status")
+			return executeShortcutCommand("db", "status")
 		},
 	})
 
@@ -229,7 +221,7 @@ Available subcommands:
 		Use:   "clear",
 		Short: "Clear database",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return executeMainCommand("db", "clear")
+			return executeShortcutCommand("db", "clear")
 		},
 	})
 
@@ -238,7 +230,7 @@ Available subcommands:
 		Short: "Update stale pages",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			allArgs := buildArgs(cmd, args, "update", []string{"days", "offline"})
-			return executeMainCommand(append([]string{"db"}, allArgs...)...)
+			return executeShortcutCommand(append([]string{"db"}, allArgs...)...)
 		},
 	}
 	updateCmd.Flags().Int("days", 7, "update pages older than this many days")
@@ -258,7 +250,7 @@ func fixShortcutCmd() *cobra.Command {
   wut f "docer ps"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			allArgs := buildArgs(cmd, args, "fix", []string{"copy", "list"})
-			return executeMainCommand(allArgs...)
+			return executeShortcutCommand(allArgs...)
 		},
 	}
 
@@ -277,12 +269,11 @@ func smartShortcutCmd() *cobra.Command {
 		Example: `  wut ? "how to find large files"
   wut ? "compress folder to tar.gz"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			allArgs := buildArgs(cmd, args, "smart", []string{"exec", "correct", "limit"})
-			return executeMainCommand(allArgs...)
+			allArgs := buildArgs(cmd, args, "smart", []string{"correct", "limit"})
+			return executeShortcutCommand(allArgs...)
 		},
 	}
 
-	cmd.Flags().BoolP("exec", "e", false, "execute selected command")
 	cmd.Flags().BoolP("correct", "c", true, "auto-correct typos")
 	cmd.Flags().IntP("limit", "l", 0, "maximum suggestions to show (0 = unlimited)")
 

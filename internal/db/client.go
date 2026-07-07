@@ -18,7 +18,9 @@ import (
 )
 
 const (
-	baseRawURL = "https://raw.githubusercontent.com/tldr-pages/tldr/main"
+	baseRawURL  = "https://raw.githubusercontent.com/tldr-pages/tldr/main"
+	userAgent   = "wut/1.0.0 (command-line assistant; +https://github.com/anomalyco/wut)"
+	maxBodySize = 64 * 1024 // 64KB limit for TLDR page content
 	// Platforms available in tldr-pages
 	PlatformCommon  = "common"
 	PlatformLinux   = "linux"
@@ -418,6 +420,8 @@ func (c *Client) fetch(ctx context.Context, url string) (string, error) {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
+	req.Header.Set("User-Agent", userAgent)
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("%w: failed to fetch: %w", errRemoteTemporary, err)
@@ -433,7 +437,8 @@ func (c *Client) fetch(ctx context.Context, url string) (string, error) {
 		return "", fmt.Errorf("%w: unexpected status code: %d", errRemoteTemporary, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	limitedReader := io.LimitReader(resp.Body, maxBodySize)
+	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return "", fmt.Errorf("%w: failed to read body: %w", errRemoteTemporary, err)
 	}

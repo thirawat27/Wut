@@ -30,10 +30,9 @@ Uses local database if available, otherwise fetches from online.
 Auto-detects offline mode when no internet connection.`,
 	Example: `  wut suggest git
   wut suggest docker
-  wut suggest              # Interactive mode
-  wut suggest npm --raw    # Plain text output
-  wut suggest git --offline # Force offline mode
-  wut suggest git --exec   # Execute selected command`,
+ 	wut suggest              # Interactive mode
+ 	wut suggest npm --raw    # Plain text output
+ 	wut suggest git --offline # Force offline mode`,
 	RunE: runSuggest,
 }
 
@@ -42,7 +41,6 @@ var (
 	suggestQuiet   bool
 	suggestLimit   int
 	suggestOffline bool
-	suggestExec    bool
 )
 
 func init() {
@@ -52,7 +50,6 @@ func init() {
 	suggestCmd.Flags().BoolVarP(&suggestQuiet, "quiet", "q", false, "output only the command examples")
 	suggestCmd.Flags().IntVarP(&suggestLimit, "limit", "l", 10, "maximum number of examples to show")
 	suggestCmd.Flags().BoolVarP(&suggestOffline, "offline", "o", false, "force offline mode (use local database only)")
-	suggestCmd.Flags().BoolVarP(&suggestExec, "exec", "e", false, "execute the selected command after TUI closes")
 }
 
 func runSuggest(cmd *cobra.Command, args []string) error {
@@ -143,17 +140,8 @@ func runInteractiveMode(client *db.Client, storage *db.Storage) error {
 		return fmt.Errorf("TUI error: %w", err)
 	}
 
-	// Get selected command or executed command
+	// Get selected command
 	if m, ok := finalModel.(*db.Model); ok {
-		// Check if a command should be executed
-		if cmd := m.GetExecutedCommand(); cmd != "" {
-			fmt.Printf("\n⚡ Executing: %s\n\n", cmd)
-			if err := db.ExecuteCommand(cmd); err != nil {
-				return fmt.Errorf("execution failed: %w", err)
-			}
-			return nil
-		}
-
 		selected := m.Selected()
 		if selected != "" {
 			fmt.Println(selected)
@@ -255,38 +243,9 @@ func runCommandMode(client *db.Client, storage *db.Storage, query string) error 
 		return nil
 	}
 
-	if suggestExec {
-		return runDetailMode(client, storage, page)
-	}
-
 	// Render with lipgloss
 	output := db.FormatPage(page)
 	fmt.Println(output)
-
-	return nil
-}
-
-func runDetailMode(client *db.Client, storage *db.Storage, page *db.Page) error {
-	model := db.NewModel()
-	if storage != nil {
-		model.SetStorage(storage)
-	}
-	model.SetInitialPage(page)
-
-	program := tea.NewProgram(model, tea.WithAltScreen())
-	finalModel, err := program.Run()
-	if err != nil {
-		return fmt.Errorf("TUI error: %w", err)
-	}
-
-	if m, ok := finalModel.(*db.Model); ok {
-		if cmd := m.GetExecutedCommand(); cmd != "" {
-			fmt.Printf("\n⚡ Executing: %s\n\n", cmd)
-			if err := db.ExecuteCommand(cmd); err != nil {
-				return fmt.Errorf("execution failed: %w", err)
-			}
-		}
-	}
 
 	return nil
 }

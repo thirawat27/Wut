@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/hbollon/go-edlib"
 )
@@ -277,6 +278,8 @@ func (c *Corrector) checkMissingPrefix(command string) *Correction {
 
 // checkDangerous flags destructive commands with a high-confidence warning.
 func (c *Corrector) checkDangerous(command string) *Correction {
+	dangerousOnce.Do(initDangerousRegex)
+
 	cmdLower := strings.ToLower(strings.TrimSpace(command))
 	for _, pattern := range c.dangerousPatterns {
 		p := strings.ToLower(pattern)
@@ -290,11 +293,11 @@ func (c *Corrector) checkDangerous(command string) *Correction {
 			}
 		}
 	}
-	if ok, _ := regexp.MatchString(`(?i)rm\s+-rf\s+/?$`, command); ok {
+	if dangerousRe != nil && dangerousRe.MatchString(command) {
 		return &Correction{Original: command, Corrected: "", Confidence: 0.95,
 			Explanation: "⚠️  This deletes the root directory!", IsDangerous: true}
 	}
-	if ok, _ := regexp.MatchString(`>\s*/dev/sd[a-z]`, command); ok {
+	if dangerousDiskRe != nil && dangerousDiskRe.MatchString(command) {
 		return &Correction{Original: command, Corrected: "", Confidence: 0.95,
 			Explanation: "⚠️  This overwrites a disk device!", IsDangerous: true}
 	}
@@ -559,9 +562,20 @@ func looksLikePathOrURL(s string) bool {
 // Corpora
 // ──────────────────────────────────────────────────────────────────────────────
 
-var dangerousList = []string{
-	"rm -rf /", "rm -rf /*", "> /dev/sda", "mkfs.ext3 /dev/sda",
-	"dd if=/dev/zero of=/dev/sda", ":(){ :|:& };:", "chmod -R 777 /",
+var (
+	dangerousList = []string{
+		"rm -rf /", "rm -rf /*", "> /dev/sda", "mkfs.ext3 /dev/sda",
+		"dd if=/dev/zero of=/dev/sda", ":(){ :|:& };:", "chmod -R 777 /",
+	}
+
+	dangerousRe     *regexp.Regexp
+	dangerousDiskRe *regexp.Regexp
+	dangerousOnce   sync.Once
+)
+
+func initDangerousRegex() {
+	dangerousRe = regexp.MustCompile(`(?i)rm\s+-rf\s+/?$`)
+	dangerousDiskRe = regexp.MustCompile(`>\s*/dev/sd[a-z]`)
 }
 
 // ── Corpus package-level vars (initialised once, reused forever) ─────────────

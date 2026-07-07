@@ -498,9 +498,9 @@ def --env wut-current-line [] {
 
 def --env oops [...args] {
     if (($args | length) == 0) {
-        ^wut fix --exec
+        ^wut fix
     } else {
-        ^wut fix --exec ...$args
+        ^wut fix ...$args
     }
 }
 
@@ -520,7 +520,7 @@ if shutil.which("wut") is None:
     return
 
 aliases["wut-tui"] = ["wut", "suggest"]
-aliases["oops"] = lambda args: subprocess.run(["wut", "fix", "--exec", *args], check=False)
+aliases["oops"] = lambda args: subprocess.run(["wut", "fix", *args], check=False)
 aliases["again"] = aliases["oops"]
 
 @events.on_ptk_create
@@ -555,7 +555,7 @@ set edit:insert:binding[Ctrl-@] = {
 }
 
 fn oops {|@args|
-    wut fix --exec $@args
+    wut fix $@args
 }
 
 fn again {|@args|
@@ -569,8 +569,8 @@ func generateCmdCode() string {
 REM WUT Cmd Integration - managed by WUT. Remove with: wut install --uninstall
 doskey wut-tui=wut suggest
 doskey wut-current=wut suggest $*
-doskey oops=wut fix --exec $*
-doskey again=wut fix --exec $*
+doskey oops=wut fix $*
+doskey again=wut fix $*
 `
 }
 

@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -85,6 +87,21 @@ func NewEngine(storage *db.Storage) *Engine {
 	}
 }
 
+func safeGo(fn func()) {
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "WUT smart engine: recovered panic: %v\n%s", r, debug.Stack())
+			}
+		}()
+		fn()
+	}()
+	_ = wg
+}
+
 // SetWeights sets custom scoring weights
 func (e *Engine) SetWeights(weights ScoringWeights) {
 	e.mu.Lock()
@@ -94,7 +111,7 @@ func (e *Engine) SetWeights(weights ScoringWeights) {
 
 // Suggest returns intelligent command suggestions
 func (e *Engine) Suggest(ctx context.Context, query string, contextData *appctx.Context, limit int) ([]Suggestion, error) {
-	if limit < 0 {
+	if limit <= 0 {
 		limit = 10
 	}
 	if contextData == nil {
@@ -112,44 +129,79 @@ func (e *Engine) Suggest(ctx context.Context, query string, contextData *appctx.
 	var wg sync.WaitGroup
 
 	// 1. History-based suggestions
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "WUT smart engine history: recovered panic: %v\n%s", r, debug.Stack())
+			}
+		}()
 		select {
 		case suggestionChan <- e.getHistorySuggestions(ctx, query, limit):
 		case <-ctx.Done():
 		}
-	})
+	}()
 
 	// 2. Context-specific suggestions
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "WUT smart engine context: recovered panic: %v\n%s", r, debug.Stack())
+			}
+		}()
 		select {
 		case suggestionChan <- e.getContextSuggestions(contextData, query):
 		case <-ctx.Done():
 		}
-	})
+	}()
 
 	// 3. Common workflow suggestions
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "WUT smart engine workflow: recovered panic: %v\n%s", r, debug.Stack())
+			}
+		}()
 		select {
 		case suggestionChan <- e.getWorkflowSuggestions(contextData, query):
 		case <-ctx.Done():
 		}
-	})
+	}()
 
 	// 4. Fuzzy matched suggestions
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "WUT smart engine fuzzy: recovered panic: %v\n%s", r, debug.Stack())
+			}
+		}()
 		select {
 		case suggestionChan <- e.getFuzzySuggestions(query, limit):
 		case <-ctx.Done():
 		}
-	})
+	}()
 
 	// 5. Command catalog / TLDR suggestions
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "WUT smart engine catalog: recovered panic: %v\n%s", r, debug.Stack())
+			}
+		}()
 		select {
 		case suggestionChan <- e.getCatalogSuggestions(ctx, query, limit):
 		case <-ctx.Done():
 		}
-	})
+	}()
 
 	// Close channel when done
 	go func() {
@@ -955,7 +1007,7 @@ func normalizeSmartToken(value string) string {
 
 // GetFallbackSuggestions returns fallback suggestions when normal flow fails
 func (e *Engine) GetFallbackSuggestions(ctx *appctx.Context, limit int) []Suggestion {
-	if limit < 0 {
+	if limit <= 0 {
 		limit = 10
 	}
 

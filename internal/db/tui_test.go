@@ -82,3 +82,27 @@ func TestSelectedExampleLine(t *testing.T) {
 		t.Fatalf("selectedExampleLine() = %d, want 6", got)
 	}
 }
+
+func TestParsePageHandlesLargeContent(t *testing.T) {
+	c := NewClient()
+	content := "> A command that lists directory contents.\n\n- List files\n`ls`\n- List all files\n`ls -a`\n\n"
+	page := c.parsePage(content, "ls", "common", "en")
+	if page.Name == "" {
+		t.Fatal("page name should not be empty")
+	}
+	if len(page.Examples) != 2 {
+		t.Fatalf("expected 2 examples, got %d", len(page.Examples))
+	}
+}
+
+func TestFetchBodyLimit(t *testing.T) {
+	c := NewClient()
+	largeContent := make([]byte, maxBodySize+1024)
+	for i := range largeContent {
+		largeContent[i] = 'x'
+	}
+	page := c.parsePage(string(largeContent), "test", "common", "en")
+	if page == nil {
+		t.Fatal("parsePage should handle large content without panic")
+	}
+}

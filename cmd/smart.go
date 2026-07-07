@@ -34,7 +34,6 @@ and suggest the most relevant commands.`,
 
 var (
 	smartLimit   int
-	smartExec    bool
 	smartCorrect bool
 )
 
@@ -42,7 +41,6 @@ func init() {
 	rootCmd.AddCommand(smartCmd)
 
 	smartCmd.Flags().IntVarP(&smartLimit, "limit", "l", 0, "maximum suggestions to show (0 = unlimited)")
-	smartCmd.Flags().BoolVarP(&smartExec, "exec", "e", false, "execute selected command")
 	smartCmd.Flags().BoolVarP(&smartCorrect, "correct", "c", true, "auto-correct typos")
 }
 
