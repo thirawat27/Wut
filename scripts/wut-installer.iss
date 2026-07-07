@@ -2,7 +2,7 @@
 ; This script creates a Windows installer for WUT - AI-Powered Command Helper
 
 #define MyAppName "WUT"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Thirawat27"
 #define MyAppURL "https://github.com/thirawat27/wut"
 #define MyAppExeName "wut.exe"

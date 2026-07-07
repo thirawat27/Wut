@@ -240,7 +240,7 @@ func Save() error {
 // setDefaults sets default configuration values
 func setDefaults() {
 	viper.SetDefault("app.name", "wut")
-	viper.SetDefault("app.version", "1.0.0")
+	viper.SetDefault("app.version", "1.0.1")
 	viper.SetDefault("app.debug", false)
 	viper.SetDefault("app.initialized", false)
 
@@ -291,7 +291,7 @@ func createDefaultConfig(path string) error {
 
 app:
   name: "wut"
-  version: "1.0.0"
+  version: "1.0.1"
   debug: false
   initialized: false
 

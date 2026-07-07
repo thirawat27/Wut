@@ -19,7 +19,7 @@ import (
 
 const (
 	baseRawURL  = "https://raw.githubusercontent.com/tldr-pages/tldr/main"
-	userAgent   = "wut/1.0.0 (command-line assistant; +https://github.com/anomalyco/wut)"
+	userAgent   = "wut/1.0.1 (command-line assistant; +https://github.com/anomalyco/wut)"
 	maxBodySize = 64 * 1024 // 64KB limit for TLDR page content
 	// Platforms available in tldr-pages
 	PlatformCommon  = "common"

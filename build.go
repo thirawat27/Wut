@@ -23,7 +23,7 @@ import (
 )
 
 var (
-	version   = "1.0.0"
+	version   = "1.0.1"
 	buildTime = time.Now().Format("2006-01-02_15:04:05")
 	commit    = "unknown"
 )
@@ -225,7 +225,7 @@ func getInstallPath() string {
 
 func getGitInfo() {
 	// Version is hardcoded - edit this when releasing new version
-	version = "v1.0.0"
+	version = "v1.0.1"
 
 	// Try to get commit hash
 	if out, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output(); err == nil {

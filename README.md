@@ -17,7 +17,7 @@
 
 ---
 
-**WUT** is a standalone command-line assistant that runs as its own terminal application. Launch it with `wut terminal` (or `wut t`), search commands, fix typos, and execute—all without touching your shell config. Optional shell key bindings are available if you want them, but WUT works out of the box as a separate terminal tool.
+**WUT** is a standalone command-line assistant that runs as its own terminal application. Launch it with `wut terminal` (or `wut t`), search commands, fix typos, and copy—all without touching your shell config. WUT never executes commands automatically; it helps you find and understand them safely.
 
 ## Table of Contents
 
@@ -34,15 +34,15 @@
 ## Key Features
 
 - **Standalone Terminal App**: Launch with `wut terminal` or `wut t`—no shell hooks required
-- **Smart Command Suggestions**: Context-aware command recommendations based on your project type and history
+- **Smart Command Suggestions**: Context-aware command recommendations based on your project type and history (5 concurrent sources)
 - **Typo Correction**: Detect and fix typos across the **entire command sentence** (not just the first word)
+- **Dangerous Command Detection**: Warns before destructive operations like `rm -rf /`, disk overwrites, and more
 - **Undo Assistant**: Instantly suggests how to revert your last command with `wut undo`
 - **Command Explanations**: Get detailed breakdowns of what commands do and their potential risks
-- **Command Database**: Quick access to practical command examples from the command database
-- **History Tracking**: Learn from your command usage patterns
-- **Optional Shell Integration**: Add key bindings later with `wut install` if you want them
+- **Responsive TUI**: Interactive terminal UI that adapts to any screen size (35-120+ columns)
 - **Cross-Platform**: Works on Windows, macOS, Linux, and BSD systems (FreeBSD, OpenBSD, NetBSD)
 - **Privacy-Focused**: All processing happens locally on your machine
+- **Safety-First**: WUT never executes commands—it shows, explains, and copies to clipboard
 
 ## Installation
 
@@ -114,7 +114,7 @@ All installation scripts support these options:
 
 | Option (Linux/macOS) | Option (Windows) | Description | Example |
 |---------------------|------------------|-------------|---------|
-| `--version` | `-Version` | Install specific version | `--version v1.0.0` |
+| `--version` | `-Version` | Install specific version | `--version v1.0.1` |
 | `--no-init` | `-NoInit` | Skip automatic initialization | `--no-init` |
 | `--no-shell` | `-NoShell` | Skip shell integration | `--no-shell` |
 | `--force` | `-Force` | Overwrite existing installation | `--force` |
@@ -123,10 +123,10 @@ All installation scripts support these options:
 Example with options:
 ```bash
 # Linux/macOS/BSD
-curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | bash -s -- --version v1.0.0 --no-init
+curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | bash -s -- --version v1.0.1 --no-init
 
 # Windows
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.ps1))) -Version v1.0.0 -NoInit
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.ps1))) -Version v1.0.1 -NoInit
 ```
 
 ### Docker

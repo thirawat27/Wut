@@ -10,7 +10,7 @@
     'wut install --shell <shell>' afterwards if you want key bindings.
 
 .PARAMETER Version
-    Install specific version tag (e.g. v1.0.0). Default: latest
+    Install specific version tag (e.g. v1.0.1). Default: latest
 
 .PARAMETER Force
     Skip confirmation prompt if WUT is already installed.
@@ -34,7 +34,7 @@
 
 .EXAMPLE
     # Install specific version
-    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.ps1))) -Version "v1.0.0"
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.ps1))) -Version "v1.0.1"
 
 .EXAMPLE
     # Uninstall
@@ -103,7 +103,7 @@ Examples:
     irm https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.ps1 | iex
 
     # Specific version
-    & ([scriptblock]::Create((irm .../install.ps1))) -Version "v1.0.0"
+    & ([scriptblock]::Create((irm .../install.ps1))) -Version "v1.0.1"
 
     # Uninstall
     & ([scriptblock]::Create((irm .../install.ps1))) -Uninstall
