@@ -107,7 +107,8 @@ done
 `bash` runs the same implementation smoke test in a separate **Full — later**
 section. A green smoke test does not promote it to Full: coexistence with an
 existing `DEBUG` trap, `PROMPT_COMMAND`, bash-preexec, and Starship remains the
-promotion gate.
+promotion gate. A failing Bash smoke test is reported as a warning; it cannot
+fail the Full-class release gate before that promotion decision.
 
 PowerShell 7 and Windows PowerShell run on the Windows runner. Manual-class
 shells (`sh`, `dash`, `ksh`, `cmd.exe`) assert only steps 1, 7, and 8 plus

@@ -24,14 +24,23 @@ TIMEOUT_SECONDS = 30
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print("usage: pty-session.py PROGRAM [ARG ...]", file=sys.stderr)
+    args = sys.argv[1:]
+    immediate = args[:1] == ["--immediate"]
+    if immediate:
+        args = args[1:]
+    if not args:
+        print("usage: pty-session.py [--immediate] PROGRAM [ARG ...]", file=sys.stderr)
         return 2
 
-    commands = iter(line.rstrip(b"\r\n") + b"\r" for line in sys.stdin.buffer.readlines())
+    lines = [line.rstrip(b"\r\n") + b"\r" for line in sys.stdin.buffer.readlines()]
+    commands = iter(lines)
     child, master = pty.fork()
     if child == 0:
-        os.execvp(sys.argv[1], sys.argv[1:])
+        os.execvp(args[0], args)
+
+    if immediate:
+        os.write(master, b"".join(lines))
+        commands = iter(())
 
     deadline = time.monotonic() + TIMEOUT_SECONDS
     try:

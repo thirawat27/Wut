@@ -45,7 +45,14 @@ else
 fi
 
 ok()      { pass=$((pass+1)); printf '  %s %-9s %s\n' "$(green PASS)" "$1" "$(grey "${2:-}")"; }
-bad()     { fail=$((fail+1)); failed_shells="$failed_shells $1"; printf '  %s %-9s %s\n' "$(red FAIL)" "$1" "$2"; }
+warn()    { printf '  %s %-9s %s\n' "$(grey WARN)" "$1" "$(grey "$2")"; }
+bad()     {
+	if [ "${WUT_MATRIX_OPTIONAL:-0}" = 1 ]; then
+		warn "$1" "$2"
+		return
+	fi
+	fail=$((fail+1)); failed_shells="$failed_shells $1"; printf '  %s %-9s %s\n' "$(red FAIL)" "$1" "$2"
+}
 skipped() { skip=$((skip+1)); printf '  %s %-9s %s\n' "$(grey SKIP)" "$1" "$(grey "$2")"; }
 
 if [ "${1:-}" = "--docker" ]; then
@@ -185,11 +192,8 @@ run_full() {
 		bash)   session_script "$shell" | "$bin" --rcfile "$rcfile" -i >/dev/null 2>&1 ;;
 		zsh)    session_script "$shell" | ZDOTDIR="$HOME" "$bin" -i >/dev/null 2>&1 ;;
 		fish)
-			if [ "$(uname -s)" = "Darwin" ]; then
-				session_script "$shell" | script -q /dev/null "$bin" -i >/dev/null 2>&1
-			else
-				session_script "$shell" | script -qefc "$bin -i" /dev/null >/dev/null 2>&1
-			fi
+			session_script "$shell" | python3 "$ROOT/scripts/pty-session.py" \
+				--immediate "$bin" -i >/dev/null 2>&1
 			;;
 		nu)
 			session_script "$shell" | python3 "$ROOT/scripts/pty-session.py" \
@@ -314,7 +318,7 @@ for shell in $FULL_LATER_CLASS; do
 		skipped "$shell" "not installed here"
 		continue
 	fi
-	run_full "$shell" "$bin"
+	WUT_MATRIX_OPTIONAL=1 run_full "$shell" "$bin"
 done
 
 printf '\nManual class — only what they promise\n'
