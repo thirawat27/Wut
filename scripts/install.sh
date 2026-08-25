@@ -1,375 +1,166 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# Install WUT.
+#
+# The whole point of this script is the checksum. A one-line installer that
+# pipes a download into a shell and never verifies it has taught the user to
+# trust whatever answers that hostname today; this one refuses to unpack an
+# archive whose SHA-256 does not appear in the signed checksums file.
+#
+#   curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | sh
+#
+# Environment:
+#   WUT_VERSION   a tag to install, e.g. v1.0.0 (default: the latest release)
+#   WUT_INSTALL   where the binary goes (default: ~/.local/bin)
+#   WUT_SKIP_CHECKSUM=1   skip verification. Only for a machine with no
+#                         sha256 tool at all, and it says so loudly.
 
-set -euo pipefail
-
-readonly RED='\033[0;31m'
-readonly GREEN='\033[0;32m'
-readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
-readonly CYAN='\033[0;36m'
-readonly BOLD='\033[1m'
-readonly NC='\033[0m'
+set -eu
 
 REPO="thirawat27/wut"
-VERSION="latest"
-FORCE=false
-UNINSTALL=false
-NO_INIT=false
-NO_SHELL=false
+INSTALL_DIR="${WUT_INSTALL:-$HOME/.local/bin}"
 
-print_header() {
-    echo -e "${CYAN}${BOLD}"
-    echo ' _    _ _____ _____'
-    echo '| |  | |_   _|  __ \'
-    echo '| |  | | | | | |  | |'
-    echo '| |  | | | | | |  | |'
-    echo '| |__| |_| |_| |__| |'
-    echo ' \____/|_____|_____/'
-    echo -e "${NC}"
-    echo -e "${BLUE}AI-Powered Command Helper${NC}"
-    echo ""
+say()  { printf '  %s\n' "$*"; }
+warn() { printf '  warning: %s\n' "$*" >&2; }
+die()  { printf '  error: %s\n' "$*" >&2; exit 1; }
+
+need() {
+	command -v "$1" >/dev/null 2>&1 || die "this script needs $1"
 }
 
-info()    { echo -e "${BLUE}[INFO]${NC}  $1"; }
-success() { echo -e "${GREEN}[OK]${NC}    $1"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC}  $1"; }
-error()   { echo -e "${RED}[ERROR]${NC} $1" >&2; }
-die()     { error "$1"; exit 1; }
+# --- what are we running on -------------------------------------------------
 
-usage() {
-    cat <<'EOF'
-Usage: install.sh [OPTIONS]
+detect_platform() {
+	os=$(uname -s)
+	case "$os" in
+		Linux)   os=linux ;;
+		Darwin)  os=darwin ;;
+		FreeBSD) os=freebsd ;;
+		OpenBSD) os=openbsd ;;
+		NetBSD)  os=netbsd ;;
+		MINGW*|MSYS*|CYGWIN*)
+			die "on Windows use scripts/install.ps1 instead" ;;
+		*) die "unsupported operating system: $os" ;;
+	esac
 
-Options:
-    -v, --version TAG   Install a specific release tag (default: latest)
-    -f, --force         Skip overwrite confirmation
-    --uninstall         Remove the installed binary
-    --no-init           Skip automatic `wut init --quick`
-    --no-shell          Skip shell hook installation during init (default: skipped)
-    -h, --help          Show this message
+	arch=$(uname -m)
+	case "$arch" in
+		x86_64|amd64) arch=amd64 ;;
+		arm64|aarch64) arch=arm64 ;;
+		*) die "unsupported architecture: $arch" ;;
+	esac
 
-Examples:
-    curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | bash
-    curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | bash -s -- --version v1.0.1
-EOF
+	printf '%s %s' "$os" "$arch"
 }
 
-http_get() {
-    local url="$1"
-    local out="$2"
+# --- download helpers -------------------------------------------------------
 
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL --progress-bar "$url" -o "$out"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -q --show-progress "$url" -O "$out"
-    else
-        die "Neither curl nor wget found. Please install one of them."
-    fi
+fetch() {
+	# fetch <url> <destination>
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL --retry 3 --connect-timeout 20 -o "$2" "$1"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q -O "$2" "$1"
+	else
+		die "this script needs curl or wget"
+	fi
 }
 
-http_get_json() {
-    local url="$1"
-
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL -H "User-Agent: WUT-Installer" -H "Accept: application/vnd.github+json" "$url"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO- --header="User-Agent: WUT-Installer" --header="Accept: application/vnd.github+json" "$url"
-    else
-        die "Neither curl nor wget found. Please install one of them."
-    fi
+fetch_stdout() {
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL --retry 3 --connect-timeout 20 "$1"
+	else
+		wget -qO- "$1"
+	fi
 }
 
-# verify_checksum confirms the downloaded archive matches the SHA-256 published
-# in the release's checksums.txt. Without this the installer executes whatever
-# bytes it received, with no way to notice tampering or a truncated download.
-#
-# Set WUT_SKIP_CHECKSUM=1 only to install a release published before
-# checksums.txt existed.
-verify_checksum() {
-    local release_json="$1" temp_dir="$2" archive_path="$3" asset_name="$4"
-
-    if [ "${WUT_SKIP_CHECKSUM:-0}" = "1" ]; then
-        warn "Checksum verification skipped (WUT_SKIP_CHECKSUM=1)"
-        return 0
-    fi
-
-    local checksums_url checksums_path
-    checksums_url="$(find_asset_url "$release_json" "checksums.txt")"
-    if [ -z "$checksums_url" ]; then
-        die "This release publishes no checksums.txt, so the download cannot be verified.
-       Re-run with WUT_SKIP_CHECKSUM=1 if you accept that risk."
-    fi
-
-    checksums_path="${temp_dir}/checksums.txt"
-    http_get "$checksums_url" "$checksums_path"
-
-    local expected actual
-    expected="$(awk -v name="$asset_name" '$2 == name || $2 == "*" name { print $1; exit }' "$checksums_path")"
-    if [ -z "$expected" ]; then
-        die "No checksum entry for ${asset_name} in checksums.txt"
-    fi
-
-    if command -v sha256sum >/dev/null 2>&1; then
-        actual="$(sha256sum "$archive_path" | awk '{print $1}')"
-    elif command -v shasum >/dev/null 2>&1; then
-        actual="$(shasum -a 256 "$archive_path" | awk '{print $1}')"
-    elif command -v openssl >/dev/null 2>&1; then
-        actual="$(openssl dgst -sha256 "$archive_path" | awk '{print $NF}')"
-    else
-        die "No SHA-256 tool found (sha256sum, shasum, or openssl). Cannot verify the download."
-    fi
-
-    if [ "$expected" != "$actual" ]; then
-        die "Checksum mismatch for ${asset_name}.
-       expected: ${expected}
-       actual:   ${actual}
-       Refusing to install. Do not run this file."
-    fi
-
-    success "Checksum verified (sha256)"
+latest_version() {
+	fetch_stdout "https://api.github.com/repos/$REPO/releases/latest" |
+		sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' |
+		head -n 1
 }
 
-parse_args() {
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -v|--version)
-                VERSION="${2:-}"; shift 2 ;;
-            -f|--force)
-                FORCE=true; shift ;;
-            --uninstall)
-                UNINSTALL=true; shift ;;
-            --no-init)
-                NO_INIT=true; shift ;;
-            --no-shell)
-                NO_SHELL=true; shift ;;
-            -h|--help)
-                usage; exit 0 ;;
-            *)
-                error "Unknown option: $1"
-                usage
-                exit 1 ;;
-        esac
-    done
+sha256_of() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | cut -d' ' -f1
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$1" | cut -d' ' -f1
+	elif command -v sha256 >/dev/null 2>&1; then
+		sha256 -q "$1"
+	else
+		return 1
+	fi
 }
 
-detect_os() {
-    case "$(uname -s)" in
-        Linux) echo "Linux" ;;
-        Darwin) echo "Darwin" ;;
-        FreeBSD) echo "Freebsd" ;;
-        OpenBSD) echo "Openbsd" ;;
-        NetBSD) echo "Netbsd" ;;
-        *)
-            die "Unsupported OS: $(uname -s)"
-            ;;
-    esac
+# --- verify -----------------------------------------------------------------
+
+verify() {
+	# verify <archive> <checksums-file> <archive-name>
+	expected=$(grep " \*\{0,1\}$3\$" "$2" | cut -d' ' -f1 | head -n 1)
+	[ -n "$expected" ] || die "$3 is not listed in checksums.txt"
+
+	if ! actual=$(sha256_of "$1"); then
+		if [ "${WUT_SKIP_CHECKSUM:-0}" = "1" ]; then
+			warn "no sha256 tool found and WUT_SKIP_CHECKSUM=1 — installing UNVERIFIED"
+			return 0
+		fi
+		die "no sha256 tool found. Install one, or re-run with WUT_SKIP_CHECKSUM=1 to accept an unverified binary"
+	fi
+
+	if [ "$actual" != "$expected" ]; then
+		printf '  expected %s\n  actual   %s\n' "$expected" "$actual" >&2
+		die "checksum mismatch — refusing to install"
+	fi
+	say "checksum ok"
 }
 
-detect_arch() {
-    case "$(uname -m)" in
-        x86_64|amd64) echo "x86_64" ;;
-        aarch64|arm64) echo "arm64" ;;
-        i386|i686) echo "i386" ;;
-        armv6l) echo "armv6" ;;
-        armv7l|armv7) echo "armv7" ;;
-        riscv64) echo "riscv64" ;;
-        *)
-            die "Unsupported architecture: $(uname -m)"
-            ;;
-    esac
-}
-
-resolve_release_json() {
-    local version="$1"
-    local api_url
-
-    if [ "$version" = "latest" ]; then
-        api_url="https://api.github.com/repos/${REPO}/releases/latest"
-    else
-        local tag="${version}"
-        [[ "$tag" == v* ]] || tag="v${tag}"
-        api_url="https://api.github.com/repos/${REPO}/releases/tags/${tag}"
-    fi
-
-    info "Querying GitHub API: $api_url"
-    http_get_json "$api_url"
-}
-
-extract_json_field() {
-    local json="$1"
-    local field="$2"
-    printf '%s' "$json" | sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n1
-}
-
-find_asset_url() {
-    local json="$1"
-    local asset_name="$2"
-
-    printf '%s\n' "$json" | awk -v asset="$asset_name" '
-        $0 ~ "\"name\": \"" asset "\"" { found=1; next }
-        found && /"browser_download_url"/ {
-            gsub(/.*"browser_download_url"[[:space:]]*:[[:space:]]*"/, "", $0)
-            gsub(/".*/, "", $0)
-            print
-            exit
-        }
-    '
-}
-
-# list_asset_names prints every asset name in a release, so a mismatch can be
-# reported with the names that actually exist rather than a bare "not found".
-list_asset_names() {
-    printf '%s\n' "$1" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
-}
-
-# resolve_archive_name finds the archive for this OS/arch.
-#
-# GoReleaser names archives with the version stripped of its leading "v"
-# (wut_1.0.2_Linux_x86_64.tar.gz). The literal name this script used to build
-# kept the "v", so it never matched a published asset. Both spellings are tried,
-# then a pattern search, so a change to the archive template degrades into a
-# clear error instead of a silent miss.
-resolve_archive_name() {
-    local release_json="$1" tag_name="$2" os_name="$3" arch_name="$4"
-    local bare_version="${tag_name#v}"
-    local candidate
-
-    for candidate in \
-        "wut_${bare_version}_${os_name}_${arch_name}.tar.gz" \
-        "wut_${tag_name}_${os_name}_${arch_name}.tar.gz"
-    do
-        if [ -n "$(find_asset_url "$release_json" "$candidate")" ]; then
-            printf '%s' "$candidate"
-            return 0
-        fi
-    done
-
-    candidate="$(list_asset_names "$release_json" \
-        | grep -E "^wut_.*_${os_name}_${arch_name}\.tar\.gz$" \
-        | head -n1)"
-    if [ -n "$candidate" ]; then
-        printf '%s' "$candidate"
-        return 0
-    fi
-
-    return 1
-}
-
-choose_install_dir() {
-    if [ -w "/usr/local/bin" ]; then
-        echo "/usr/local/bin"
-        return
-    fi
-
-    mkdir -p "${HOME}/.local/bin"
-    echo "${HOME}/.local/bin"
-}
-
-run_quick_init() {
-    local binary_path="$1"
-    if [ "$NO_INIT" = true ]; then
-        return
-    fi
-
-    local args=(init --quick --skip-shell)
-    if [ "$NO_SHELL" = true ]; then
-        # Kept for backwards compatibility; --skip-shell is now the default.
-        args+=(--skip-shell)
-    fi
-
-    info "Running first-time setup automatically..."
-    if "$binary_path" "${args[@]}"; then
-        success "WUT initialized"
-    else
-        warn "Automatic initialization failed. You can run '$binary_path init' manually."
-    fi
-}
-
-uninstall_wut() {
-    local removed=false
-    local candidates=(
-        "$(command -v wut 2>/dev/null || true)"
-        "/usr/local/bin/wut"
-        "${HOME}/.local/bin/wut"
-    )
-
-    for candidate in "${candidates[@]}"; do
-        if [ -n "$candidate" ] && [ -f "$candidate" ]; then
-            rm -f "$candidate"
-            removed=true
-            success "Removed $candidate"
-        fi
-    done
-
-    if [ "$removed" = false ]; then
-        warn "No installed wut binary was found."
-    fi
-}
+# --- main -------------------------------------------------------------------
 
 main() {
-    parse_args "$@"
-    print_header
+	need uname
+	need tar
 
-    if [ "$UNINSTALL" = true ]; then
-        uninstall_wut
-        exit 0
-    fi
+	set -- $(detect_platform)
+	os=$1; arch=$2
 
-    if command -v wut >/dev/null 2>&1 && [ "$FORCE" != true ]; then
-        local current_ver
-        current_ver="$(wut --version 2>/dev/null | head -1 || echo "unknown")"
-        warn "WUT is already installed (${current_ver})"
-        read -rp "Reinstall / upgrade? [y/N] " answer
-        [[ "$answer" =~ ^[Yy]$ ]] || { info "Cancelled."; exit 0; }
-    fi
+	version="${WUT_VERSION:-}"
+	if [ -z "$version" ]; then
+		version=$(latest_version)
+		[ -n "$version" ] || die "could not determine the latest version; set WUT_VERSION"
+	fi
+	# The archive name has no leading v; the tag does.
+	bare=${version#v}
 
-    local os_name arch_name release_json tag_name asset_name asset_url
-    os_name="$(detect_os)"
-    arch_name="$(detect_arch)"
-    release_json="$(resolve_release_json "$VERSION")"
-    tag_name="$(extract_json_field "$release_json" "tag_name")"
-    [ -n "$tag_name" ] || die "Could not determine release version from GitHub API"
+	archive="wut_${bare}_${os}_${arch}.tar.gz"
+	base="https://github.com/$REPO/releases/download/$version"
 
-    if ! asset_name="$(resolve_archive_name "$release_json" "$tag_name" "$os_name" "$arch_name")"; then
-        error "No ${os_name}/${arch_name} archive found in release ${tag_name}."
-        error "Assets in this release:"
-        list_asset_names "$release_json" | sed 's/^/  - /' >&2
-        exit 1
-    fi
-    asset_url="$(find_asset_url "$release_json" "$asset_name")"
-    [ -n "$asset_url" ] || die "Could not resolve a download URL for '${asset_name}'"
+	tmp=$(mktemp -d 2>/dev/null || mktemp -d -t wut)
+	trap 'rm -rf "$tmp"' EXIT INT TERM
 
-    local temp_dir archive_path extract_dir
-    temp_dir="$(mktemp -d)"
-    archive_path="${temp_dir}/${asset_name}"
-    extract_dir="${temp_dir}/extract"
-    mkdir -p "$extract_dir"
-    trap 'rm -rf "$temp_dir"' EXIT
+	say "wut $version for $os/$arch"
+	fetch "$base/$archive" "$tmp/$archive" || die "could not download $archive"
+	fetch "$base/checksums.txt" "$tmp/checksums.txt" || die "could not download checksums.txt"
+	verify "$tmp/$archive" "$tmp/checksums.txt" "$archive"
 
-    info "Downloading ${asset_name}"
-    http_get "$asset_url" "$archive_path"
+	tar -xzf "$tmp/$archive" -C "$tmp"
+	[ -f "$tmp/wut" ] || die "the archive did not contain a wut binary"
 
-    verify_checksum "$release_json" "$temp_dir" "$archive_path" "$asset_name"
+	mkdir -p "$INSTALL_DIR"
+	# Install to a temporary name and rename, so a running wut is never
+	# half-overwritten.
+	cp "$tmp/wut" "$INSTALL_DIR/.wut.new"
+	chmod 0755 "$INSTALL_DIR/.wut.new"
+	mv "$INSTALL_DIR/.wut.new" "$INSTALL_DIR/wut"
 
-    info "Extracting archive"
-    tar -xzf "$archive_path" -C "$extract_dir"
+	say "installed $INSTALL_DIR/wut"
 
-    local binary_path
-    binary_path="$(find "$extract_dir" -type f -name wut | head -n1)"
-    [ -n "$binary_path" ] || die "Could not find extracted wut binary"
+	case ":$PATH:" in
+		*":$INSTALL_DIR:"*) ;;
+		*) warn "$INSTALL_DIR is not on your PATH. Add it, then re-open your shell." ;;
+	esac
 
-    local install_dir final_path
-    install_dir="$(choose_install_dir)"
-    final_path="${install_dir}/wut"
-    install -m 0755 "$binary_path" "$final_path"
-    success "Installed to ${final_path}"
-
-    run_quick_init "$final_path"
-
-    echo ""
-    echo -e "${GREEN}${BOLD}Installation complete!${NC}"
-    echo "  ${final_path} --help"
-    echo "  ${final_path} suggest"
+	printf '\n  Next:\n    wut shell install    %s\n    wut db sync          %s\n\n' \
+		"# so bare 'wut' knows what just failed" \
+		"# build the local knowledge index"
 }
 
 main "$@"

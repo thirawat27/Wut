@@ -1,265 +1,219 @@
 name: CI
 
-# One workflow for pushes and pull requests. push.yml and pull_request.yml were
-# ~95% identical copies of each other; the only real difference was the artifact
-# name, which is now derived from the event.
 on:
   push:
-    branches: ["main"]
+    branches: [main]
   pull_request:
-    branches: ["main"]
-  workflow_dispatch:
 
-# Least privilege by default. Jobs that need more request it explicitly.
 permissions:
   contents: read
 
-# A newer commit supersedes an in-flight run for the same ref instead of letting
-# both burn three runners each.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  GO_VERSION_FILE: go.mod
-
 jobs:
-  # ── Fast feedback: formatting, vet, and lint on one runner ────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
+          go-version-file: go.mod
           cache: true
 
-      - name: Check formatting
+      - name: gofmt
         run: |
-          set -euo pipefail
-          unformatted="$(gofmt -l . | grep -v '^dist/' | grep -v '^build/' || true)"
+          unformatted=$(gofmt -l ./cmd ./internal ./pkg)
           if [ -n "$unformatted" ]; then
-            echo "::error::These files are not gofmt-clean:"
+            echo "These files are not gofmt-clean:"
             echo "$unformatted"
-            gofmt -d $unformatted
             exit 1
           fi
 
-      - name: Verify go.mod is tidy
+      - name: go mod tidy is current
         run: |
-          set -euo pipefail
-          cp go.mod go.mod.bak && cp go.sum go.sum.bak
           go mod tidy
-          if ! diff -q go.mod go.mod.bak >/dev/null || ! diff -q go.sum go.sum.bak >/dev/null; then
-            echo "::error::go.mod/go.sum are not tidy. Run 'go mod tidy' and commit the result."
-            diff -u go.mod.bak go.mod || true
-            diff -u go.sum.bak go.sum || true
-            exit 1
-          fi
-          rm go.mod.bak go.sum.bak
+          git diff --exit-code go.mod go.sum
 
-      - name: Run vet
+      - name: go vet
         run: go vet ./...
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@v6
         with:
           version: latest
-          args: --timeout=5m
 
-      # Catches an invalid or deprecated release config at PR time rather than
-      # when a tag is pushed and the release is already half-done.
-      - name: Validate GoReleaser config
-        uses: goreleaser/goreleaser-action@v6
+  architecture:
+    # The rules that keep the design from decaying, run as their own job so a
+    # boundary violation is visible without reading the test output.
+    name: Architecture rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          version: "~> v2"
-          args: check
+          go-version-file: go.mod
+          cache: true
+      - run: go test -v ./internal/arch/...
 
-  # ── Correctness: race-enabled tests with coverage, on every OS we ship ────
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
+          go-version-file: go.mod
           cache: true
-
-      - name: Download Go modules
-        run: go mod download
-
-      # -race is what catches the concurrency defects a plain `go test` misses.
-      - name: Run tests with race detector
-        run: go test -race -shuffle=on -coverprofile=coverage.out -covermode=atomic ./...
-
-      - name: Report coverage
+      - name: Test with race detector
+        run: go test -race -shuffle=on -coverprofile=coverage.out ./...
+      - name: Coverage gate
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
-          go tool cover -func=coverage.out | tail -n 1
-          echo "### Coverage" >> "$GITHUB_STEP_SUMMARY"
-          go tool cover -func=coverage.out | tail -n 1 >> "$GITHUB_STEP_SUMMARY"
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print substr($3, 1, length($3)-1)}')
+          echo "total coverage: $total%"
+          # The gate exists from day one because the prototype reached five
+          # tested packages out of eighteen by never having one.
+          awk -v t="$total" 'BEGIN { exit (t >= 45) ? 0 : 1 }' || {
+            echo "coverage $total% is below the 45% gate"
+            exit 1
+          }
 
-      - name: Upload coverage artifact
-        if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
+  shell-matrix:
+    # The claim that a shell is "Full class" is only worth what a live session
+    # says about it. This job sources the real hook into each shell, runs a
+    # command that fails, and asserts the record — which is the one thing the
+    # unit tests structurally cannot do.
+    name: Shell matrix (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          name: coverage
-          path: coverage.out
-          if-no-files-found: error
+          go-version-file: go.mod
+          cache: true
 
-  # ── Security: dependency CVEs and static analysis ────────────────────────
+      - name: Install the shells (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zsh fish ksh dash elvish xonsh
+          # nushell is not packaged, so take it from a pinned release. A
+          # failure here leaves nu reported as SKIP, which is honest; it must
+          # never leave it reported as PASS.
+          curl -fsSL -o /tmp/nu.tar.gz https://github.com/nushell/nushell/releases/download/0.99.1/nu-0.99.1-x86_64-unknown-linux-gnu.tar.gz || true
+          tar -xzf /tmp/nu.tar.gz -C /tmp || true
+          sudo cp /tmp/nu-*/nu /usr/local/bin/ 2>/dev/null || true
+
+      - name: Install the shells (macOS)
+        if: runner.os == 'macOS'
+        run: brew install fish nushell elvish xonsh || true
+
+      - name: Build
+        run: go build -o build/wut ./cmd/wut
+
+      - name: POSIX shells
+        if: runner.os != 'Windows'
+        run: bash scripts/shell-matrix.sh
+
+      - name: PowerShell hosts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          go build -o build/wut.exe ./cmd/wut
+          ./scripts/shell-matrix.ps1
+
+  eval:
+    # E1 and E3 — is the answer engine any good, as opposed to does it work.
+    # E1 needs a real index, so this job builds one; without it the benchmark
+    # skips, and a benchmark that silently skips is a benchmark nobody reads.
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build the knowledge index
+        run: |
+          go build -o build/wut ./cmd/wut
+          ./build/wut db sync
+      - name: E1 retrieval and E3 grounding
+        run: go test -v ./internal/eval/...
+
   security:
     name: Security
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-          cache: true
-
-      # Reports only vulnerabilities the code can actually reach, so a finding
-      # here is always actionable.
-      - name: Run govulncheck
-        uses: golang/govulncheck-action@v1
-        with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
-
-      - name: Run gosec
-        uses: securego/gosec@master
-        with:
-          args: -no-fail -fmt sarif -out gosec.sarif ./...
-
-      - name: Upload gosec results
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: gosec.sarif
-          category: gosec
-
-  # ── Supply chain: flag vulnerable or newly introduced dependencies in PRs ─
-  dependency-review:
-    name: Dependency review
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          fail-on-severity: high
-          comment-summary-in-pr: on-failure
+          go-version-file: go.mod
+          cache: true
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
-  # ── Build the shippable artifacts, only once the gates above are green ────
   build:
-    name: Build (${{ matrix.target }})
-    needs: [lint, test]
-    runs-on: ${{ matrix.runs_on }}
-    timeout-minutes: 20
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: linux
-            runs_on: ubuntu-latest
-            artifact_suffix: lnx
-            binary_path: dist/bin/wut
-            bundle_dir: dist/bundle/wut
-          - target: macos
-            runs_on: macos-latest
-            artifact_suffix: osx
-            binary_path: dist/bin/wut
-            bundle_dir: dist/bundle/wut
-          - target: windows-x64
-            runs_on: windows-latest
-            artifact_suffix: win-x64
-            binary_path: dist/bin/wut.exe
-            bundle_dir: dist/bundle/wut
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+          - { goos: freebsd, goarch: amd64 }
+          - { goos: openbsd, goarch: amd64 }
+          - { goos: netbsd, goarch: amd64 }
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          go-version-file: ${{ env.GO_VERSION_FILE }}
+          go-version-file: go.mod
           cache: true
+      - name: Cross-compile
+        # CGO_ENABLED=0 is not incidental. The whole matrix builds from one
+        # runner only while the binary stays free of cgo, which is also why
+        # the optional model runtime is a separate downloaded artifact rather
+        # than a linked library.
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: go build -trimpath -ldflags "-s -w" -o /dev/null ./cmd/wut
 
-      - name: Download Go modules
-        run: go mod download
-
-      - name: Build binary (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist/bin
-          version="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-dev}}"
-          commit="${GITHUB_SHA::7}"
-          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          go build -trimpath -ldflags "-s -w -X main.Version=${version} -X main.BuildTime=${build_time} -X main.Commit=${commit}" -o "${{ matrix.binary_path }}" .
-
-      - name: Build binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist/bin | Out-Null
-          $version = if ($env:GITHUB_HEAD_REF) { $env:GITHUB_HEAD_REF } elseif ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "dev" }
-          $commit = $env:GITHUB_SHA.Substring(0, 7)
-          $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-          go build -trimpath -ldflags "-s -w -X main.Version=$version -X main.BuildTime=$buildTime -X main.Commit=$commit" -o "${{ matrix.binary_path }}" .
-
-      - name: Smoke test the binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          "${{ matrix.binary_path }}" --version
-          "${{ matrix.binary_path }}" --help > /dev/null
-
-      - name: Stage portable bundle (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: bash ./.github/scripts/portable_bundle.sh "${{ matrix.binary_path }}" "${{ matrix.bundle_dir }}"
-
-      - name: Stage portable bundle (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: .github/scripts/portable_bundle.ps1 -BinaryPath "${{ matrix.binary_path }}" -OutputDir "${{ matrix.bundle_dir }}"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wut_${{ github.event_name }}_${{ github.sha }}_${{ matrix.artifact_suffix }}
-          path: ${{ github.workspace }}/${{ matrix.bundle_dir }}
-          if-no-files-found: error
-
-  # ── Single required status check for branch protection ───────────────────
   ci-passed:
     name: CI passed
     runs-on: ubuntu-latest
-    needs: [lint, test, security, build]
+    needs: [lint, architecture, test, shell-matrix, eval, security, build]
     if: always()
     steps:
-      - name: Fail if any required job failed
+      - name: Check results
         run: |
           if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "true" ]; then
-            echo "::error::One or more CI jobs failed."
             exit 1
           fi
-          echo "All CI jobs succeeded."

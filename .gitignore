@@ -1,52 +1,5 @@
-# Binaries
-wut
-*.exe
-*.dll
-*.so
-*.dylib
-
-# Build directories
 /build/
 /dist/
-/bin/
-
-# Test files
-*.test
-*.out
-coverage.html
+*.exe
 coverage.out
-
-# Go specific
-vendor/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
-# OS
 .DS_Store
-Thumbs.db
-
-# WUT data (user-specific)
-/.wut/
-/.config/wut/
-
-# Database files
-*.db
-*.bolt
-
-# Log files
-*.log
-/logs/
-
-# Model files
-*.onnx
-*.pb
-
-# Temporary files
-/tmp/
-/temp/
-*.tmp

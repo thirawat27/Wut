@@ -1,0 +1,137 @@
+# Fact-driven correction rules.
+#
+# These are the corrections that can be decided from the command line plus
+# read-only facts about the working directory — no fuzzy matching, no model.
+# Adding one needs no Go.
+#
+# Corrections that DO need fuzzy matching (a mistyped program, verb, flag,
+# npm script, make target, git branch, or directory) are Go producers in
+# producers.go, because an edit-distance search is an algorithm rather than a
+# condition. That split is deliberate and is the honest boundary of
+# "rules as data".
+#
+# ── Condition keys accepted by `require` ────────────────────────────────────
+#   git.in_repo        true | false
+#   git.has_upstream   true | false
+#   git.single_remote  true | false
+#   project            go | node | rust | python | ruby | java | dotnet | php
+#                      | docker | make
+#   operands.empty     true | false
+#   operand0.exists    true | false
+#   operand0.is_dir    true | false
+#   operand0.is_file   true | false
+#
+# ── Template variables accepted by `rewrite`, `title`, and `why[].text` ─────
+#   {{program}}  the command name as typed
+#   {{sub0}} {{sub1}}   the first and second subcommand words
+#   {{operand0}}        the first non-flag argument
+#   {{operands}}        every non-flag argument, re-quoted
+#   {{args}}            everything after the program, verbatim, flags included
+#   {{raw}}             the whole line as typed
+#   {{git.branch}} {{git.remote}}
+#
+# Weights are the candidate's score: they sum to how sure the rule is, and each
+# one is shown to the user as its own line. A rule that cannot justify 0.5 of
+# score in reasons a person would accept is a rule that should not exist.
+
+version: 1
+rules:
+  - id: git/push-no-upstream
+    program: git
+    subcommand: [push]
+    none_of_flags: ["--set-upstream", "-u"]
+    require:
+      # Only a bare `git push`. Once the user has named a remote and a branch
+      # themselves, rewriting the line would throw their arguments away — which
+      # is exactly what this rule did before the operand check was added.
+      operands.empty: "true"
+      git.in_repo: "true"
+      git.has_upstream: "false"
+      git.single_remote: "true"
+    rewrite: "git push --set-upstream {{git.remote}} {{git.branch}}"
+    title: "Push and set the upstream branch"
+    why:
+      - code: git.no_upstream
+        text: "branch '{{git.branch}}' has no upstream"
+        ref: "git rev-parse --abbrev-ref @{u}"
+        weight: 0.65
+      - code: git.single_remote
+        text: "'{{git.remote}}' is the only remote"
+        ref: "git remote"
+        weight: 0.3
+
+  - id: cd/parent-no-space
+    program: "cd.."
+    rewrite: "cd .."
+    title: "Go up one directory"
+    why:
+      - code: cd.missing_space
+        text: "'cd..' is 'cd' and '..' run together — the shell needs a space"
+        weight: 0.95
+
+  - id: cd/grandparent-no-space
+    program: "cd..."
+    rewrite: "cd ../.."
+    title: "Go up two directories"
+    why:
+      - code: cd.missing_space
+        text: "'cd...' usually means two levels up"
+        weight: 0.9
+
+  - id: fs/copy-missing-recursive
+    program: cp
+    none_of_flags: ["-r", "-R", "--recursive", "-a", "--archive"]
+    require:
+      operand0.is_dir: "true"
+    rewrite: "cp -r {{operands}}"
+    title: "Copy the directory and its contents"
+    why:
+      - code: fs.source_is_dir
+        text: "'{{operand0}}' is a directory, and cp needs -r to descend into one"
+        ref: "stat {{operand0}}"
+        weight: 0.9
+
+  - id: fs/remove-missing-recursive
+    program: rm
+    none_of_flags: ["-r", "-R", "--recursive"]
+    require:
+      operand0.is_dir: "true"
+    rewrite: "rm -r {{operands}}"
+    title: "Remove the directory and its contents"
+    why:
+      - code: fs.target_is_dir
+        text: "'{{operand0}}' is a directory, and rm needs -r to remove one"
+        ref: "stat {{operand0}}"
+        weight: 0.85
+
+  - id: docker/compose-legacy
+    program: docker-compose
+    # {{args}} rather than {{operands}}: everything after the program, flags
+    # included, exactly as typed. {{operands}} would have dropped the -d.
+    rewrite: "docker compose {{args}}"
+    title: "Use the built-in compose subcommand"
+    why:
+      - code: docker.compose_v1
+        text: "docker-compose is the standalone v1 tool; modern Docker ships 'docker compose'"
+        weight: 0.7
+
+  - id: go/run-needs-target
+    program: go
+    subcommand: [run]
+    require:
+      operands.empty: "true"
+      project: go
+    rewrite: "go run ."
+    title: "Run the package in this directory"
+    why:
+      - code: go.run_no_target
+        text: "'go run' needs a package or file; '.' is the one you are standing in"
+        weight: 0.8
+      - code: project.go
+        text: "this directory is a Go module"
+        ref: "go.mod"
+        weight: 0.1
+
+# Deliberately absent: a rule turning `npm start` into `npm run start`. Both
+# work identically, so it would be noise, and a correction engine that fires on
+# commands that were already fine is one people learn to ignore.

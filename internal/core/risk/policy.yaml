@@ -1,0 +1,247 @@
+# WUT risk policy.
+#
+# One file, one id per rule, every rule reachable from `wut risk explain <id>`.
+# Levels: caution < destructive < irreversible.
+#
+# Assess takes the HIGHEST match, not the last, so ordering here is for reading
+# only. A user policy in ~/.config/wut/risk.d/*.yaml can add rules; because the
+# highest match wins, a user rule can only ever raise a verdict.
+version: 1
+rules:
+  # ── Filesystem ────────────────────────────────────────────────────────────
+  - id: fs/recursive-force-root
+    level: irreversible
+    class: [data-loss]
+    reason: "Deletes the filesystem root. There is no undo and no backup unless you made one."
+    match:
+      program: rm
+      flags_all: ["-r", "-f"]
+      operand_matches: '^(/+|~/?|/\*|\$HOME/?)$'
+
+  - id: fs/recursive-force
+    level: destructive
+    class: [data-loss]
+    reason: "Recursive forced delete. Nothing is moved to a trash folder."
+    match:
+      program: rm
+      flags_all: ["-r", "-f"]
+
+  - id: fs/remove-recursive
+    level: caution
+    class: [data-loss]
+    reason: "Removes a directory and everything inside it. Nothing goes to a trash folder."
+    match:
+      program: rm
+      flags_any: ["-r", "-R", "--recursive"]
+
+  - id: fs/remove-force
+    level: caution
+    class: [data-loss]
+    reason: "Forced delete: no prompt, even for write-protected files."
+    match:
+      program: rm
+      flags_any: ["-f", "--force"]
+
+  - id: fs/write-block-device
+    level: irreversible
+    class: [data-loss]
+    reason: "Writes straight to a block device, destroying the partition table and everything on it."
+    match:
+      raw_matches: '(^|\s)(>|of=)\s*/dev/(sd[a-z]|nvme\d+n\d+|hd[a-z]|disk\d+)'
+
+  - id: fs/mkfs
+    level: irreversible
+    class: [data-loss]
+    reason: "Formats a filesystem. Every file on the target is gone."
+    match:
+      raw_matches: '(^|\s)mkfs(\.[a-z0-9]+)?(\s|$)'
+
+  - id: fs/chmod-recursive-777
+    level: destructive
+    class: [privilege]
+    reason: "Makes files world-writable, recursively. This is very hard to walk back correctly."
+    match:
+      program: chmod
+      flags_any: ["-R", "--recursive"]
+      operand_matches: '^0?777$'
+
+  - id: fs/chown-recursive-root
+    level: destructive
+    class: [privilege]
+    reason: "Re-owns a whole tree starting at a system path."
+    match:
+      program: chown
+      flags_any: ["-R", "--recursive"]
+      operand_matches: '^(/|/etc|/usr|/var|/bin|/sbin)$'
+
+  # ── Version control ───────────────────────────────────────────────────────
+  - id: vcs/history-rewrite
+    level: destructive
+    class: [remote-state, history-rewrite]
+    reason: "Overwrites remote history. Anyone who has pulled this branch will have to recover by hand."
+    match:
+      program: git
+      subcommand: [push]
+      flags_any: ["--force", "-f"]
+
+  - id: vcs/hard-reset
+    level: destructive
+    class: [data-loss]
+    reason: "Discards every uncommitted change in the working tree."
+    match:
+      program: git
+      subcommand: [reset]
+      flags_any: ["--hard"]
+
+  - id: vcs/clean-force
+    level: destructive
+    class: [data-loss]
+    reason: "Deletes untracked files. Git keeps no copy of them."
+    match:
+      program: git
+      subcommand: [clean]
+      flags_any: ["-f", "--force", "-fd", "-fdx", "-xdf"]
+
+  - id: vcs/checkout-discard
+    level: caution
+    class: [data-loss]
+    reason: "Restores files from the index, discarding local edits to them."
+    match:
+      program: git
+      subcommand: [checkout]
+      operand_matches: '^\.$'
+
+  - id: vcs/branch-delete-force
+    level: caution
+    class: [data-loss]
+    reason: "Deletes a branch even if it was never merged."
+    match:
+      program: git
+      subcommand: [branch]
+      flags_any: ["-D"]
+
+  # ── Publishing and remote state ───────────────────────────────────────────
+  - id: pkg/publish
+    level: irreversible
+    class: [remote-state, network-mutating]
+    reason: "Publishes to a public registry. Most registries do not allow a real unpublish."
+    any_of:
+      - { program: npm, subcommand: [publish] }
+      - { program: pnpm, subcommand: [publish] }
+      - { program: yarn, subcommand: [publish] }
+      - { program: cargo, subcommand: [publish] }
+      - { program: gem, subcommand: [push] }
+      - { program: twine, subcommand: [upload] }
+      - { program: dotnet, subcommand: [nuget], operand_matches: '^push$' }
+
+  - id: infra/terraform-destroy
+    level: irreversible
+    class: [remote-state, data-loss]
+    reason: "Tears down real infrastructure, including managed databases and their data."
+    match:
+      program: terraform
+      subcommand: [destroy]
+
+  - id: infra/terraform-apply-auto
+    level: destructive
+    class: [remote-state]
+    reason: "Applies infrastructure changes with no plan review."
+    match:
+      program: terraform
+      subcommand: [apply]
+      flags_any: ["-auto-approve", "--auto-approve"]
+
+  - id: k8s/delete-namespace
+    level: irreversible
+    class: [remote-state, data-loss]
+    reason: "Deletes a namespace and every object inside it."
+    # kubectl takes two subcommand words, so "namespace" is a verb here and not
+    # an operand. Getting that wrong is the most common way a policy rule
+    # silently never fires.
+    any_of:
+      - { program: kubectl, subcommand: [delete, namespace] }
+      - { program: kubectl, subcommand: [delete, ns] }
+
+  - id: k8s/delete
+    level: destructive
+    class: [remote-state]
+    reason: "Deletes live cluster objects."
+    match:
+      program: kubectl
+      subcommand: [delete]
+
+  - id: container/prune-all
+    level: destructive
+    class: [data-loss]
+    reason: "Removes unused containers, networks, images and — with volumes — their data."
+    any_of:
+      - { program: docker, subcommand: [system, prune], flags_any: ["-a", "--all", "--volumes"] }
+      - { program: docker, subcommand: [volume, prune], flags_any: ["-f", "--force"] }
+      - { program: podman, subcommand: [system, prune], flags_any: ["-a", "--all", "--volumes"] }
+
+  # ── Databases ─────────────────────────────────────────────────────────────
+  - id: db/drop
+    level: irreversible
+    class: [data-loss]
+    reason: "Drops a database or table. Recovery needs a backup you took beforehand."
+    match:
+      raw_matches: '(?i)\bdrop\s+(database|schema|table)\b'
+
+  - id: db/truncate
+    level: irreversible
+    class: [data-loss]
+    reason: "Empties a table. Usually not transactional and usually not logged row by row."
+    match:
+      raw_matches: '(?i)\btruncate\s+table\b'
+
+  - id: db/unbounded-mutation
+    level: destructive
+    class: [data-loss]
+    reason: "An UPDATE or DELETE with no WHERE clause touches every row."
+    # Go's regexp engine is RE2 and has no lookahead, so "X without Y" is
+    # expressed as two conditions rather than one pattern.
+    # Not anchored to the start of the line: the SQL almost always arrives as
+    # an argument (psql -c '...', mysql -e '...'), so anchoring only ever
+    # matched a query typed at a bare prompt, which is the case WUT never sees.
+    match:
+      raw_matches: '(?i)(^|[''"\s])(update\s+\S+\s+set\b|delete\s+from\b)'
+      raw_not_matches: '(?i)\bwhere\b'
+
+  # ── Privilege and system ──────────────────────────────────────────────────
+  - id: sys/pipe-to-shell
+    level: destructive
+    class: [privilege, network-mutating]
+    reason: "Runs whatever the server returns, unreviewed, in your shell."
+    match:
+      raw_matches: '(?i)\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba|z|k|)sh\b'
+
+  - id: sys/shutdown
+    level: caution
+    class: [privilege]
+    reason: "Stops the machine. Anything unsaved on it is lost."
+    match:
+      program_any_of: [shutdown, reboot, halt, poweroff]
+
+  - id: sys/kill-everything
+    level: destructive
+    class: [privilege]
+    reason: "Signals every process the user owns, which on most systems ends the session."
+    match:
+      raw_matches: '\bkill(all)?\s+(-9\s+)?(-1|--all)\b'
+
+  - id: sys/fork-bomb
+    level: destructive
+    class: [privilege]
+    reason: "Fork bomb. The machine stops responding until it is restarted."
+    match:
+      raw_matches: ':\(\)\s*\{.*\|.*&.*\}\s*;?\s*:'
+
+  # Matched on the program rather than on the raw text, so that merely
+  # mentioning "history -c" inside another command does not trip it.
+  - id: sys/history-clear
+    level: caution
+    class: [data-loss]
+    reason: "Clears shell history, which is also what WUT reads to help you."
+    match:
+      program: history
+      flags_any: ["-c"]

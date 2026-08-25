@@ -1,316 +1,112 @@
-# GoReleaser configuration for WUT
-# Documentation: https://goreleaser.com
-
+# GoReleaser is the only build path. There is no Makefile and no build script:
+# the prototype had four ways to produce a binary and they disagreed with each
+# other.
 version: 2
 
 project_name: wut
 
-# Build configuration
 before:
   hooks:
     - go mod tidy
-    - go generate ./...
+    - go test ./...
 
-# Build matrices
 builds:
   - id: wut
-    main: .
+    main: ./cmd/wut
     binary: wut
     env:
+      # Not incidental. The whole platform matrix cross-compiles from one
+      # runner only while the binary is free of cgo — which is also why the
+      # optional wording model is a local runtime the user already has, rather
+      # than a linked inference library.
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
     ldflags:
-      - -s -w
-      - -X main.Version={{.Version}}
-      - -X main.BuildTime={{.Date}}
-      - -X main.Commit={{.Commit}}
-    goos:
-      - linux
-      - darwin
-      - windows
-      - freebsd
-      - openbsd
-      - netbsd
-    goarch:
-      - amd64
-      - arm64
-      - arm
-      - "386"
-      - riscv64
-    goarm:
-      - "6"
-      - "7"
+      - -s -w -X main.version={{.Version}}
+    goos: [linux, darwin, windows, freebsd, openbsd, netbsd]
+    goarch: [amd64, arm64]
     ignore:
-      - goos: darwin
-        goarch: "386"
-      - goos: darwin
-        goarch: arm
-      - goos: windows
-        goarch: riscv64
-      - goos: freebsd
-        goarch: riscv64
       - goos: openbsd
         goarch: arm64
-      - goos: openbsd
-        goarch: arm
-      - goos: openbsd
-        goarch: "386"
-      - goos: openbsd
-        goarch: riscv64
       - goos: netbsd
         goarch: arm64
-      - goos: netbsd
-        goarch: arm
-      - goos: netbsd
-        goarch: "386"
-      - goos: netbsd
-        goarch: riscv64
 
-# Archive configuration
 archives:
   - id: wut
-    name_template: >-
-      {{ .ProjectName }}_
-      {{- .Version }}_
-      {{- title .Os }}_
-      {{- if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "386" }}i386
-      {{- else }}{{ .Arch }}{{ end }}
-      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
         formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
     files:
-      - LICENSE
       - README.md
+      - LICENSE
+      - docs/architecture/**/*
 
-# Checksum configuration
 checksum:
-  name_template: "checksums.txt"
+  name_template: checksums.txt
   algorithm: sha256
 
-# Release configuration
-release:
-  github:
-    owner: thirawat27
-    name: wut
-  draft: false
-  prerelease: auto
-  name_template: "{{.ProjectName}}-v{{.Version}}"
-  footer: |
-    ## Installation
-
-    ### Quick Install (Linux/macOS)
-    ```bash
-    curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | bash
-    ```
-
-    ### Quick Install (Windows PowerShell)
-    ```powershell
-    irm https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.ps1 | iex
-    ```
-
-    ### With Initialization
-    ```bash
-    # Linux/macOS
-    curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | bash -s -- --init
-
-    # Windows
-    irm https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.ps1 | iex -Init
-    ```
-
-    ### Package Managers
-    ```bash
-    # Chocolatey (Windows)
-    choco install wut
-
-    # Go Install
-    go install github.com/thirawat27/wut@latest
-
-    # Docker
-    docker pull ghcr.io/thirawat27/wut:latest
-    ```
-
-# Changelog configuration
-changelog:
-  sort: asc
-  use: github
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^ci:"
-      - "^chore:"
-      - "Merge pull request"
-      - "Merge branch"
-  groups:
-    - title: "🚀 Features"
-      regexp: "^feat([(:])"
-      order: 0
-    - title: "🐛 Bug Fixes"
-      regexp: "^fix([(:])"
-      order: 1
-    - title: "🧹 Maintenance"
-      regexp: "^(chore|refactor|perf|style)([(:])"
-      order: 2
-    - title: "📚 Documentation"
-      regexp: "^docs([(:])"
-      order: 3
-    - title: "🔬 Testing"
-      regexp: "^test([(:])"
-      order: 4
-    - title: "⚙️ CI/CD"
-      regexp: "^ci([(:])"
-      order: 5
-    - title: "Others"
-      order: 999
-
-# Snapshot configuration
-snapshot:
-  version_template: "{{ .Version }}-next"
-
-# Source archive
-source:
-  enabled: true
-  name_template: "{{ .ProjectName }}_{{ .Version }}_source"
-
-# SBOM generation
 sboms:
-  - id: wut
-    artifacts: archive
-    documents:
-      - "{{ .ArtifactName }}.sbom.json"
-    cmd: syft
-    args: ["$artifact", "--output", "cyclonedx-json={{ .document }}"]
+  - artifacts: archive
 
-# Chocolatey Package Configuration
-chocolateys:
-  - name: wut
-    title: WUT - AI Command Helper
-    authors: Thirawat
-    project_url: https://github.com/thirawat27/wut
-    icon_url: https://raw.githubusercontent.com/thirawat27/wut/main/assets/icon.png
-    copyright: 2025 Thirawat
-    license_url: https://github.com/thirawat27/wut/blob/main/LICENSE
-    require_license_acceptance: false
-    project_source_url: https://github.com/thirawat27/wut
-    docs_url: https://github.com/thirawat27/wut/blob/main/README.md
-    bug_tracker_url: https://github.com/thirawat27/wut/issues
-    summary: AI-Powered Command Helper
-    description: |
-      WUT is a production-ready, cross-platform, intelligent command line assistant 
-      that helps you find the right commands, correct typos, and learn new shell 
-      commands through natural language queries.
-
-      ## Features
-      - Natural language command suggestions
-      - Command typo correction
-      - Local AI processing (no cloud)
-      - Cross-platform support (Windows, macOS, Linux, BSD)
-      - Multiple shell support (Bash, Zsh, Fish, PowerShell, etc.)
-      - Beautiful TUI with terminal adaptation
-
-      ## Getting Started
-      After installation, run:
-      ```
-      wut suggest
-      ```
-
-      To install shell integration:
-      ```
-      wut install
-      ```
-    release_notes: "https://github.com/thirawat27/wut/releases/tag/{{ .Version }}"
-    dependencies:
-      - id: git
-    api_key: "{{ .Env.CHOCOLATEY_API_KEY }}"
-    skip_publish: false
-    goamd64: v1
-
-# Docker images (dockers_v2 replaces the deprecated dockers/docker_manifests
-# pair and builds the multi-arch manifest in one step).
-dockers_v2:
-  - id: wut
-    images:
-      - "ghcr.io/thirawat27/wut"
-    tags:
-      - "{{ .Version }}"
-      - "latest"
-    dockerfile: Dockerfile
-    platforms:
-      - linux/amd64
-      - linux/arm64
-    labels:
-      org.opencontainers.image.created: "{{ .Date }}"
-      org.opencontainers.image.title: "{{ .ProjectName }}"
-      org.opencontainers.image.revision: "{{ .FullCommit }}"
-      org.opencontainers.image.version: "{{ .Version }}"
-      org.opencontainers.image.source: "https://github.com/thirawat27/wut"
-      org.opencontainers.image.licenses: "MIT"
-
-# Nix flake (optional)
-# nix:
-#   - repository:
-#       owner: thirawat27
-#       name: wut
-#       branch: main
-#     path: flake.nix
-#     name: wut
-
-# Winget (Windows Package Manager) - via external publisher
-# publish winget packages via winget-pkgs repo or goreleaser-winget
-
-# Aur (Arch Linux User Repository)
-# aurs:
-#   - name: wut
-#     private_key: "{{ .Env.AUR_KEY }}"
-#     git_url: "ssh://aur@aur.archlinux.org/wut.git"
-#     depends:
-#       - git
-
-# Snapcraft (Ubuntu Snap Store)
-# snaps:
-#   - name: wut
-#     publish: true
-#     summary: AI-Powered Command Helper
-#     description: WUT helps you find commands using natural language
-#     grade: stable
-#     confinement: classic
-#     license: MIT
-#     base: core22
-
-# Keyless signing via cosign + GitHub OIDC.
-# Verify a release with:
-#   cosign verify-blob checksums.txt \
-#     --certificate checksums.txt.pem \
-#     --signature checksums.txt.sig \
-#     --certificate-identity-regexp 'https://github.com/thirawat27/wut/.*' \
-#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+# Keyless signing: no GPG key to hold, rotate, or leak, and anyone can verify
+# against the workflow identity with cosign.
 signs:
   - cmd: cosign
-    artifacts: checksum
     certificate: "${artifact}.pem"
-    output: true
     args:
-      - "sign-blob"
-      - "--yes"
+      - sign-blob
       - "--output-certificate=${certificate}"
       - "--output-signature=${signature}"
       - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
 
-# Announcing
-announce:
-  # Discord
-  discord:
-    enabled: false
-    message_template: "🚀 WUT {{ .Version }} is out! Check it out: {{ .ReleaseURL }}"
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat'
+      order: 0
+    - title: Fixes
+      regexp: '^fix'
+      order: 1
+    - title: Everything else
+      order: 99
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
 
-  # Twitter/X
-  twitter:
-    enabled: false
-    message_template: "🚀 WUT {{ .Version }} is out! AI-powered command helper for all platforms. {{ .ReleaseURL }}"
+release:
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Verifying this release
 
-  # Mastodon
-  mastodon:
-    enabled: false
-    message_template: "🚀 WUT {{ .Version }} is released! {{ .ReleaseURL }}"
-    server: ""
+    ```
+    cosign verify-blob checksums.txt \
+      --certificate checksums.txt.pem \
+      --signature checksums.txt.sig \
+      --certificate-identity-regexp 'https://github.com/thirawat27/wut/.*' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+    sha256sum -c checksums.txt --ignore-missing
+    ```
+
+    ## Installing
+
+    ```
+    curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | sh
+    ```
+
+    The script verifies the SHA-256 of the archive against `checksums.txt`
+    before it unpacks anything, and refuses to install if they disagree. On
+    Windows, `scripts/install.ps1` does the same.
+
+    Then run `wut shell install` and open a new shell.

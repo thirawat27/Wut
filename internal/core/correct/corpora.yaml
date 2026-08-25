@@ -1,0 +1,149 @@
+# Subcommand and flag corpora, used to recognise a mistyped verb or option.
+#
+# This is knowledge about *shape*, not about what a command does — the second
+# is tldr's job. Entries are ordered by how often people actually reach for
+# them, because BestMatches keeps corpus order on a distance tie, so a common
+# verb wins over a rare one at the same edit distance.
+#
+# Adding a program here needs no Go. Programs absent from this file simply do
+# not get subcommand or flag corrections, which is the safe default.
+
+git:
+  subcommands:
+    [status, add, commit, push, pull, checkout, switch, branch, merge, rebase,
+     log, diff, fetch, clone, remote, reset, restore, stash, tag, show, init,
+     cherry-pick, revert, blame, bisect, clean, config, describe, worktree,
+     submodule, apply, am, archive, gc, grep, mv, rm, shortlog, reflog,
+     sparse-checkout, notes, range-diff, maintenance]
+  flags: [--help, --version, -C, --git-dir, --work-tree, --no-pager, --bare]
+  sub_flags:
+    push: [--set-upstream, -u, --force, --force-with-lease, --tags, --all,
+           --delete, --dry-run, --quiet, --verbose, --no-verify, --atomic]
+    commit: [--message, -m, --all, -a, --amend, --no-edit, --signoff, -s,
+             --allow-empty, --fixup, --squash, --no-verify, --patch, -p]
+    checkout: [-b, -B, --track, -t, --detach, --force, -f, --orphan, --merge]
+    branch: [-a, --all, -d, --delete, -D, -m, --move, -r, --remotes, --list,
+             --show-current, --set-upstream-to, -v, --verbose]
+    log: [--oneline, --graph, --decorate, --all, -p, --patch, --stat, -n,
+          --since, --until, --author, --grep, --no-merges, --format, --pretty]
+    diff: [--staged, --cached, --stat, --name-only, --name-status, -w,
+           --ignore-all-space, --color-words]
+    reset: [--soft, --mixed, --hard, --merge, --keep]
+    pull: [--rebase, --no-rebase, --ff-only, --autostash, --all, --tags]
+    fetch: [--all, --prune, -p, --tags, --depth, --unshallow]
+    clone: [--depth, --branch, -b, --single-branch, --recurse-submodules, --bare]
+    stash: [push, pop, apply, list, drop, clear, show, -u, --include-untracked]
+    rebase: [--interactive, -i, --continue, --abort, --skip, --onto, --autosquash]
+    remote: [add, remove, rm, rename, set-url, get-url, show, prune, -v]
+
+docker:
+  subcommands:
+    [run, ps, build, images, pull, push, exec, logs, stop, start, restart, rm,
+     rmi, compose, network, volume, system, inspect, tag, login, logout, cp,
+     stats, top, kill, pause, unpause, commit, save, load, history, info]
+  flags: [--help, --version, --context, --host, -H, --log-level]
+  sub_flags:
+    run: [-d, --detach, -it, -i, --interactive, -t, --tty, --rm, --name, -p,
+          --publish, -v, --volume, -e, --env, --network, --restart, -w,
+          --workdir, --user, -u, --entrypoint, --platform]
+    build: [-t, --tag, -f, --file, --no-cache, --pull, --build-arg, --target,
+            --platform, --progress]
+    ps: [-a, --all, -q, --quiet, --filter, -f, --format, -n, --last, -s, --size]
+    exec: [-it, -i, --interactive, -t, --tty, -u, --user, -w, --workdir, -e, --env]
+    logs: [-f, --follow, --tail, --since, --until, -t, --timestamps]
+    compose: [up, down, build, logs, ps, restart, exec, run, pull, config]
+
+kubectl:
+  subcommands:
+    [get, describe, apply, delete, create, edit, logs, exec, port-forward,
+     rollout, scale, config, cluster-info, top, explain, patch, label,
+     annotate, cp, drain, cordon, uncordon, taint, wait, diff, auth, api-resources]
+  flags: [--namespace, -n, --context, --kubeconfig, --all-namespaces, -A,
+          --output, -o, --selector, -l, --help]
+
+npm:
+  subcommands:
+    [install, i, run, run-script, start, test, build, publish, init, uninstall,
+     update, audit, ci, link, list, ls, outdated, pack, version, exec, config,
+     login, logout, whoami, dedupe, prune, view, search, cache]
+  flags: [--help, --version, --global, -g, --save, --save-dev, -D, --prefix,
+          --workspace, -w, --workspaces, --silent, --loglevel, --no-fund,
+          --no-audit, --legacy-peer-deps]
+
+pnpm:
+  subcommands: [install, add, remove, run, exec, dlx, update, publish, init,
+                list, why, store, audit, dedupe, link, test, start, build]
+  flags: [--help, --version, --global, -g, --save-dev, -D, --filter, -r,
+          --recursive, --frozen-lockfile]
+
+yarn:
+  subcommands: [install, add, remove, run, upgrade, publish, init, why, list,
+                workspace, workspaces, cache, dlx, link, test, start, build]
+  flags: [--help, --version, --dev, -D, --frozen-lockfile, --silent, --cwd]
+
+go:
+  subcommands:
+    [build, run, test, get, install, mod, fmt, vet, generate, clean, list,
+     doc, env, version, work, tool, bug, fix, telemetry]
+  flags: [-h, --help]
+  sub_flags:
+    test: [-v, -run, -race, -cover, -coverprofile, -bench, -benchmem, -count,
+           -short, -timeout, -shuffle, -failfast, -json, -tags]
+    build: [-o, -v, -race, -tags, -ldflags, -gcflags, -trimpath, -mod, -buildvcs]
+    mod: [init, tidy, download, vendor, verify, why, edit, graph, why]
+    run: [-race, -tags, -ldflags, -mod]
+    vet: [-n, -x, -tags]
+
+cargo:
+  subcommands:
+    [build, run, test, check, publish, new, init, add, remove, update, clean,
+     doc, bench, fmt, clippy, install, uninstall, search, tree, fix, vendor]
+  flags: [--help, --version, --release, --verbose, -v, --quiet, -q, --offline,
+          --locked, --manifest-path, --target, --features, --all-features]
+
+pip:
+  subcommands: [install, uninstall, list, show, freeze, download, wheel, check,
+                config, search, cache, index, debug]
+  flags: [--help, --version, -r, --requirement, -U, --upgrade, -e, --editable,
+          --user, --no-cache-dir, --no-deps, --target, --index-url]
+
+apt:
+  subcommands: [install, remove, purge, update, upgrade, full-upgrade, search,
+                show, list, autoremove, clean, policy, source, depends]
+  flags: [--help, --version, -y, --yes, --no-install-recommends, --dry-run,
+          --fix-broken, -f, --quiet, -q]
+
+brew:
+  subcommands: [install, uninstall, update, upgrade, search, info, list, link,
+                unlink, tap, untap, doctor, cleanup, outdated, services, pin]
+  flags: [--help, --version, --cask, --formula, --force, -f, --verbose, --quiet]
+
+systemctl:
+  subcommands: [start, stop, restart, reload, status, enable, disable, mask,
+                unmask, list-units, list-unit-files, daemon-reload, is-active,
+                is-enabled, show, cat, edit, kill]
+  flags: [--user, --system, --now, --no-pager, --failed, -l, --full, --quiet]
+
+terraform:
+  subcommands: [init, plan, apply, destroy, validate, fmt, show, output,
+                state, import, workspace, providers, refresh, taint, untaint,
+                console, graph, login, version]
+  flags: [-help, -version, -auto-approve, -var, -var-file, -target, -chdir,
+          -input, -no-color, -json, -out]
+
+gh:
+  subcommands: [repo, pr, issue, release, workflow, run, auth, gist, api,
+                browse, codespace, config, extension, label, secret, ssh-key,
+                status, search, cache, org, project, ruleset, variable]
+  flags: [--help, --version, --repo, -R, --json, --jq, --template]
+
+dotnet:
+  subcommands: [build, run, test, publish, restore, clean, new, add, remove,
+                list, pack, nuget, sln, tool, format, watch, sdk, workload]
+  flags: [--help, --version, --configuration, -c, --framework, -f, --output,
+          -o, --runtime, -r, --verbosity, -v, --no-restore, --no-build]
+
+make:
+  subcommands: []
+  flags: [-j, --jobs, -C, --directory, -f, --file, -n, --dry-run, -k,
+          --keep-going, -s, --silent, -B, --always-make, --debug]

@@ -1,0 +1,239 @@
+# E1 — retrieval benchmark.
+#
+# One question per line: the question, a tab, then the page names that would be
+# a correct answer, comma-separated. Questions are written the way a person
+# actually asks them, not in the vocabulary of the page — the whole point is to
+# measure the gap between the two.
+#
+# A question with more than one acceptable page has more than one because a
+# person asking it would be equally well served by any of them, not because the
+# ranker happened to return them.
+#
+# Lines starting with # are comments. Blank lines are ignored.
+
+# --- git ---------------------------------------------------------------------
+undo the last commit but keep my changes	git reset
+throw away all my uncommitted changes	git reset,git checkout,git restore
+change the message of the last commit	git commit
+see what changed in a file	git diff,git log
+who wrote this line of code	git blame
+find which commit broke the build	git bisect
+squash the last three commits into one	git rebase
+push a new branch to the remote	git push
+rename a branch	git branch
+delete a remote branch	git push,git branch
+list every branch including remote ones	git branch
+stash my work temporarily	git stash
+bring back stashed changes	git stash
+show a one line summary of the history	git log
+add a file to the previous commit	git commit
+create a branch and switch to it	git checkout,git switch,git branch
+pull changes without merging	git fetch
+see which files are staged	git status
+unstage a file	git reset,git restore
+copy a commit from another branch	git cherry-pick
+tag this release	git tag
+add a second remote repository	git remote
+change the url of a remote	git remote
+ignore a file that is already tracked	git rm
+clone only the latest commit	git clone
+apply a patch file	git apply,git am
+create a patch from a commit	git format-patch,git diff
+show the commits on this branch that are not on main	git log,git cherry
+revert a commit that is already pushed	git revert
+count commits by author	git shortlog,git log
+recover a deleted branch	git reflog
+sign a commit	git commit
+
+# --- files and directories ---------------------------------------------------
+copy a directory and everything in it	cp
+move a file to another folder	mv
+delete a directory and its contents	rm
+create nested directories in one go	mkdir
+find files bigger than 100 megabytes	find
+find files changed in the last day	find
+find a file by name	find,fd
+count the lines in a file	wc
+show the first few lines of a file	head
+follow a log file as it grows	tail
+show a file with line numbers	cat,nl,bat
+compare two files line by line	diff
+create an empty file	touch
+change a file's timestamp	touch
+make a symbolic link	ln
+show where a command lives	which,type,whereis
+list files sorted by size	ls,du
+list hidden files	ls
+show the size of a directory	du
+show free disk space	df
+split a large file into parts	split
+join split files back together	cat,split
+read a binary file as hex	xxd,hexdump,od
+change a file's owner	chown
+make a script executable	chmod
+give everyone read access but only me write access	chmod
+copy a file to a remote server	scp,rsync
+sync two directories	rsync
+watch a directory for changes	inotifywait,fswatch
+securely delete a file	shred,srm
+
+# --- archives ----------------------------------------------------------------
+create a gzipped archive	tar
+extract a tar.gz file	tar
+list what is inside an archive without extracting	tar,unzip
+compress a folder into a zip	zip
+unzip a file to a specific directory	unzip
+compress a single file	gzip,bzip2,xz
+extract a file that ends in .xz	xz,tar
+create a password protected zip	zip
+extract only one file from an archive	tar,unzip
+
+# --- text processing ---------------------------------------------------------
+search for a word in all files under a directory	grep,rg
+search but ignore case	grep,rg
+show lines that do not match	grep
+find and replace text in a file	sed
+delete lines matching a pattern	sed
+print the second column of a file	awk,cut
+sum a column of numbers	awk
+sort a file numerically	sort
+remove duplicate lines	uniq,sort
+count how many times each line appears	uniq,sort
+replace tabs with spaces	expand,tr,sed
+convert text to uppercase	tr,awk
+show the difference between two directories	diff
+pretty print json	jq
+extract a field from json	jq
+filter yaml on the command line	yq
+show a file one page at a time	less,more
+number the lines of output	nl,cat
+take the last 20 lines of a command's output	tail
+remove the first line of a file	tail,sed
+
+# --- processes and system ----------------------------------------------------
+see which process is using a port	lsof,netstat,ss,fuser
+kill a process by name	pkill,killall
+kill a process by pid	kill
+list running processes	ps,top
+show the processes using the most memory	ps,top,htop
+run a command in the background	nohup,bg
+keep a command running after logout	nohup,tmux,screen
+schedule a command to run later	at,cron,crontab
+run a command every five minutes	crontab,cron
+see how long the machine has been up	uptime
+show system memory usage	free,vmstat
+show cpu information	lscpu
+watch a command's output update	watch
+limit how much cpu a process can use	cpulimit,nice
+change a process's priority	nice,renice
+show open files for a process	lsof
+send a signal to a process	kill
+wait for a background job to finish	wait
+show the environment variables	env,printenv
+set an environment variable for one command	env
+
+# --- network -----------------------------------------------------------------
+download a file from a url	curl,wget
+send a post request with json	curl,http
+check if a host is reachable	ping
+look up the ip address of a domain	dig,nslookup,host
+show my own ip address	ip,ifconfig,curl
+list listening ports	ss,netstat,lsof
+trace the route to a host	traceroute,mtr
+test whether a tcp port is open	nc,telnet,nmap
+serve the current directory over http	python,http-server,miniserve
+show http response headers only	curl
+follow redirects when downloading	curl,wget
+resume an interrupted download	wget,curl
+set up an ssh tunnel	ssh
+copy my ssh key to a server	ssh-copy-id
+generate an ssh key	ssh-keygen
+run a command on a remote machine	ssh
+mount a remote filesystem over ssh	sshfs
+scan a host for open ports	nmap
+capture network traffic	tcpdump,tshark
+
+# --- docker ------------------------------------------------------------------
+list running containers	docker,docker ps
+stop all running containers	docker,docker stop
+remove all unused images	docker,docker image,docker system
+build an image from a dockerfile	docker,docker build
+run a container and delete it when it exits	docker,docker run
+get a shell inside a running container	docker,docker exec
+see a container's logs	docker,docker logs
+copy a file out of a container	docker,docker cp
+map a port from a container to the host	docker,docker run
+mount a directory into a container	docker,docker run
+show how much disk docker is using	docker,docker system
+start the services in a compose file	docker compose
+rebuild and restart one compose service	docker compose
+follow the logs of a compose service	docker compose
+tag an image before pushing	docker,docker tag
+
+# --- kubernetes --------------------------------------------------------------
+list the pods in a namespace	kubectl
+see the logs of a pod	kubectl
+get a shell in a pod	kubectl
+describe why a pod will not start	kubectl
+forward a local port to a pod	kubectl
+apply a manifest file	kubectl
+delete a deployment	kubectl
+scale a deployment	kubectl
+switch to another cluster context	kubectl,kubectx
+show resource usage per pod	kubectl
+
+# --- package managers --------------------------------------------------------
+install a package on ubuntu	apt,apt-get
+remove a package and its configuration	apt,apt-get,dpkg
+search for a package	apt,apt-cache,brew
+update all installed packages	apt,brew,dnf,pacman
+find out which package owns a file	dpkg,rpm,pacman
+install a python package for the current user	pip,pip3
+list outdated python packages	pip,pip3
+install a node package globally	npm,yarn,pnpm
+remove unused node modules	npm,yarn
+run a package without installing it	npx,pipx
+
+# --- permissions and users ---------------------------------------------------
+add a user to a group	usermod,gpasswd
+change my password	passwd
+run a command as another user	sudo,su
+list the groups I belong to	groups,id
+show who is logged in	who,w
+give a directory to a different owner recursively	chown
+make a file readable only by me	chmod
+see what sudo rights I have	sudo
+
+# --- disks and filesystems ---------------------------------------------------
+mount a usb drive	mount
+find what is filling up the disk	du,ncdu,df
+format a drive	mkfs
+list block devices	lsblk,fdisk
+check a filesystem for errors	fsck
+create a swap file	mkswap,swapon,fallocate
+show inode usage	df
+make an iso image of a folder	mkisofs,genisoimage
+write an iso to a usb stick	dd
+benchmark disk write speed	dd,fio
+
+# --- everyday shell ----------------------------------------------------------
+repeat the last command	history,fc
+search my shell history	history,fc
+clear the terminal	clear,reset
+time how long a command takes	time
+run two commands in parallel	xargs,parallel
+run the same command on many files	xargs,find,parallel
+retry a command until it succeeds	until,watch
+show the current directory	pwd
+go back to the previous directory	cd
+create a temporary directory	mktemp
+generate a random password	openssl,pwgen
+get the sha256 of a file	sha256sum,shasum,openssl
+encode a file as base64	base64
+print a calendar	cal
+do arithmetic on the command line	bc,expr,awk
+convert a date to a unix timestamp	date
+show the current date in iso format	date
+set the system timezone	timedatectl
+say what shell I am using	echo,ps
+open a file with the default application	xdg-open,open

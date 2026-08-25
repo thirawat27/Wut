@@ -1,76 +1,47 @@
+# Linters chosen for the defect classes the prototype audit actually found, not
+# for a maximal list. Each one below has a finding behind it.
 version: "2"
 
 run:
   timeout: 5m
-  tests: true
 
 linters:
   default: standard
   enable:
-    # Correctness
-    - bodyclose # HTTP response bodies must be closed
-    - errorlint # %w / errors.Is / errors.As instead of type assertions
-    - nilerr # do not return nil when err is non-nil
-    - rowserrcheck
-    - copyloopvar
-    # Security
-    - gosec
-    # Resource discipline — the audit found unbounded reads and a shared
-    # http.Client whose timeout was wrong for bulk transfers.
-    - noctx # HTTP requests must carry a context
+    # The prototype leaked HTTP response bodies in the sync path.
+    - bodyclose
+    # The prototype used a client-wide 5s timeout for a multi-megabyte download, so
+    # `wut db sync` could not finish on a normal connection. noctx and
+    # contextcheck catch the shape of that mistake.
+    - noctx
     - contextcheck
-    # Dead code — the audit removed ~2.7k lines of unreachable code; these keep
-    # it from growing back unnoticed.
-    - unconvert
+    # The prototype compared errors by string in places and swallowed them in others.
+    - errorlint
+    - nilerr
+    # The tool touches rc files, spawns probes, and reads untrusted output.
+    - gosec
+    # Dead parameters and forgotten assignments were how the performance
+    # package accumulated 2,000 unreferenced lines.
     - unparam
     - wastedassign
-    # Readability
+    - unconvert
     - misspell
     - revive
-    - godot
 
-  settings:
-    errcheck:
-      # Deliberate discards are written as `_ = f()`; those are allowed. An
-      # unassigned ignored error is not.
-      check-blank: true
-    govet:
-      enable-all: true
-      disable:
-        - fieldalignment # cosmetic, and it fights readable struct grouping
-    gosec:
-      excludes:
-        # File permissions are chosen deliberately per call site (0600 for the
-        # database, config, and rc-file backups; 0644 for logs).
-        - G306
-    revive:
-      rules:
-        - name: exported
-          disabled: true # not a library; exported docs are enforced by review
-        - name: unused-parameter
-          disabled: true
-    misspell:
-      locale: US
-
-  exclusions:
-    generated: lax
+linters-settings:
+  gosec:
+    excludes:
+      # G204 flags every exec.Command. The fact prober is the one place that
+      # is allowed, and it is guarded by an argv-exact allowlist plus an AST
+      # test in internal/arch that fails the build if os/exec appears anywhere
+      # else. That is a stronger guarantee than this linter can express.
+      - G204
+  revive:
     rules:
-      # Test files legitimately ignore errors and use weaker constructs.
-      - path: _test\.go
-        linters:
-          - errcheck
-          - gosec
-          - unparam
+      - name: exported
+        disabled: true
 
 issues:
-  max-issues-per-linter: 0
-  max-same-issues: 0
-
-formatters:
-  enable:
-    - gofmt
-    - goimports
-  settings:
-    goimports:
-      local-prefixes:
-        - wut
+  exclude-rules:
+    - path: _test\.go
+      linters: [gosec, unparam]
