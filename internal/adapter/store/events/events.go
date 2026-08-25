@@ -136,7 +136,7 @@ func appendLine(path string, line []byte) error {
 		return err
 	}
 	if _, err := f.Write(append(line, '\n')); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	return f.Close()
@@ -334,15 +334,17 @@ func (s *Store) rewriteLocked(keep []event.Event) error {
 		if err != nil {
 			continue
 		}
-		w.Write(line)
-		w.WriteByte('\n')
+		// bufio reports write errors at Flush, so checking each one here would
+		// buy noise rather than safety.
+		_, _ = w.Write(line)
+		_ = w.WriteByte('\n')
 	}
 	if err := w.Flush(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -417,7 +419,10 @@ func (s *Store) lastSeqBySession() map[string]uint64 {
 func (s *Store) Sweep() error {
 	entries, err := os.ReadDir(s.sessions)
 	if err != nil {
-		return nil
+		// No sessions directory means nothing to sweep, which is the normal
+		// state before the first shell hook has ever written. Reporting it as
+		// a failure would make a fresh install look broken.
+		return nil //nolint:nilerr // an unreadable sessions dir is "nothing to do"
 	}
 	var stale []string
 	for _, e := range entries {

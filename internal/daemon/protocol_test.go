@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -88,8 +89,10 @@ func TestATruncatedFrameIsAnError(t *testing.T) {
 	if err := readFrame(bytes.NewReader(truncated), &Request{}); err == nil {
 		t.Error("a truncated frame was accepted")
 	}
-	if err := readFrame(bytes.NewReader([]byte{1, 2}), &Request{}); err != io.ErrUnexpectedEOF && err == nil {
+	if err := readFrame(bytes.NewReader([]byte{1, 2}), &Request{}); err == nil {
 		t.Error("a frame shorter than its header was accepted")
+	} else if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("short header gave %v, want an unexpected EOF", err)
 	}
 }
 

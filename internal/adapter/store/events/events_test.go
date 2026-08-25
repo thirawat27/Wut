@@ -330,8 +330,10 @@ func TestTheLogIsBounded(t *testing.T) {
 	// The bound is max plus a tenth: the file is only rewritten once it is
 	// meaningfully over, so a busy shell is not rewriting the whole log on
 	// every command. Anything beyond that means trimming is not happening.
-	if limit := 10 + 10/10; len(all) > limit {
-		t.Errorf("the log holds %d events with max_entries 10 (bound %d)", len(all), limit)
+	const maxEntries, slack = 10, 1 // the store rewrites only once meaningfully over
+	if len(all) > maxEntries+slack {
+		t.Errorf("the log holds %d events with max_entries %d (bound %d)",
+			len(all), maxEntries, maxEntries+slack)
 	}
 	if len(all) < 10 {
 		t.Errorf("trimming cut to %d, below max_entries", len(all))

@@ -53,7 +53,7 @@ func (a *App) Ask(ctx context.Context, req AskRequest) (Result, error) {
 
 	set := candidate.NewSet(len(hits))
 	for _, h := range hits {
-		set.Add(candidateFromHit(h, q))
+		set.Add(candidateFromHit(h))
 	}
 	set.Assess(a.deps.Policy)
 	res.Candidates = set.Ranked(limit)
@@ -62,7 +62,7 @@ func (a *App) Ask(ctx context.Context, req AskRequest) (Result, error) {
 
 // candidateFromHit turns a search result into a candidate, carrying the reason
 // it matched rather than only the score that came with it.
-func candidateFromHit(h knowledge.Hit, q knowledge.Query) candidate.Candidate {
+func candidateFromHit(h knowledge.Hit) candidate.Candidate {
 	producer := candidate.ProducerLexical
 	if h.Producer == "semantic" {
 		producer = candidate.ProducerSemantic

@@ -246,7 +246,7 @@ func (l *live) MakeTargets() []string {
 				continue
 			}
 			l.makeT = parseMakeTargets(f)
-			f.Close()
+			_ = f.Close()
 			return
 		}
 	})

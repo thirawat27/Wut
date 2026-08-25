@@ -57,10 +57,10 @@ func printDoctor(env *Env, rep app.DoctorReport) {
 		fmt.Fprintln(out)
 	}
 
-	switch {
-	case rep.Problems == 0:
+	switch rep.Problems {
+	case 0:
 		fmt.Fprintf(out, "  %s\n", s.Green("Everything checks out."))
-	case rep.Problems == 1:
+	case 1:
 		fmt.Fprintf(out, "  %s\n", s.Yellow("1 thing needs attention."))
 	default:
 		fmt.Fprintf(out, "  %s\n", s.Yellow(fmt.Sprintf("%d things need attention.", rep.Problems)))

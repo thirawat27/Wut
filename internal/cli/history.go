@@ -138,7 +138,7 @@ func newPurgeCmd(env *Env) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !yes && tty_IsInteractive() {
+			if !yes && ttyIsInteractive() {
 				fmt.Fprintf(os.Stdout, "  This deletes %d events and every session record.\n", st.Events)
 				if !confirm("Delete them?") {
 					return silent(ExitCancelled)

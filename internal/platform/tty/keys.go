@@ -70,15 +70,18 @@ func readEscapeSequence(r io.Reader) (Press, error) {
 	var buf [2]byte
 	n, err := r.Read(buf[:1])
 	if err != nil || n == 0 {
-		// Nothing followed: a real Escape.
-		return Press{Key: KeyEscape}, nil
+		// Nothing followed the ESC byte, so the user pressed Escape. This is
+		// not an error path: a bare Escape and a truncated escape sequence are
+		// indistinguishable at this layer, and treating both as Escape is what
+		// makes the key work at all.
+		return Press{Key: KeyEscape}, nil //nolint:nilerr // a read that ends here means Escape
 	}
 	if buf[0] != '[' && buf[0] != 'O' {
 		return Press{Key: KeyEscape}, nil
 	}
 	n, err = r.Read(buf[1:2])
 	if err != nil || n == 0 {
-		return Press{Key: KeyEscape}, nil
+		return Press{Key: KeyEscape}, nil //nolint:nilerr // same: an incomplete sequence is Escape
 	}
 	switch buf[1] {
 	case 'A':

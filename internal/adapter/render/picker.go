@@ -148,7 +148,7 @@ func (p *Picker) draw(cands []candidate.Candidate, cursor int, showWhy bool, pre
 	var b strings.Builder
 	lines := 0
 	writeLine := func(format string, args ...any) {
-		b.WriteString(fmt.Sprintf(format, args...))
+		fmt.Fprintf(&b, format, args...)
 		b.WriteString("\r\n")
 		lines++
 	}

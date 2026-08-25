@@ -121,7 +121,7 @@ func newDBClearCmd(env *Env) *cobra.Command {
 		Short: "Delete the index",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := env.App.IndexPath()
-			if !yes && tty_IsInteractive() {
+			if !yes && ttyIsInteractive() {
 				fmt.Fprintf(os.Stdout, "  This deletes %s.\n", path)
 				fmt.Fprintf(os.Stdout, "  %s\n", env.Style().Dim("It is derived data; wut db sync rebuilds it."))
 				if !confirm("Delete it?") {

@@ -229,7 +229,7 @@ func (u *UI) draw(st state) {
 	b.WriteString("\x1b[H\x1b[2J")
 
 	line := func(format string, args ...any) {
-		b.WriteString(fmt.Sprintf(format, args...))
+		fmt.Fprintf(&b, format, args...)
 		b.WriteString("\r\n")
 	}
 

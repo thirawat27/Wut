@@ -55,7 +55,7 @@ func newShellInstallCmd(env *Env, remove bool) *cobra.Command {
 			// Show what will change before changing it. An unattended run is
 			// still possible with --yes, but the default is to ask, because
 			// this is the one command that edits a file the user owns.
-			if !remove && !yes && !dryRun && tty_IsInteractive() {
+			if !remove && !yes && !dryRun && ttyIsInteractive() {
 				preview, err := mgr.Install(port.InstallRequest{Shells: shells, DryRun: true, Alias: alias})
 				if err != nil {
 					return err

@@ -228,15 +228,15 @@ func (f *Fetcher) download(ctx context.Context) (string, string, int64, error) {
 	written, err := io.Copy(io.MultiWriter(tmp, hash), limited)
 	closeErr := tmp.Close()
 	if err != nil {
-		os.Remove(name)
+		_ = os.Remove(name)
 		return "", "", 0, fmt.Errorf("download tldr archive: %w", err)
 	}
 	if closeErr != nil {
-		os.Remove(name)
+		_ = os.Remove(name)
 		return "", "", 0, closeErr
 	}
 	if written > maxArchiveBytes {
-		os.Remove(name)
+		_ = os.Remove(name)
 		return "", "", 0, fmt.Errorf("tldr archive is larger than the %d MB limit", maxArchiveBytes>>20)
 	}
 	return name, hex.EncodeToString(hash.Sum(nil)), written, nil
@@ -292,7 +292,7 @@ func buildFromZip(archivePath, digest string) (*index.Builder, error) {
 			continue
 		}
 		raw, err := io.ReadAll(io.LimitReader(rc, maxEntryBytes))
-		rc.Close()
+		_ = rc.Close()
 		if err != nil {
 			continue
 		}

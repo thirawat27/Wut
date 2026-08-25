@@ -47,11 +47,11 @@ func testUI(searched *[]string) *UI {
 	}
 }
 
-func rune_(r rune) tty.Press { return tty.Press{Key: tty.KeyRune, Rune: r} }
+func pressRune(r rune) tty.Press { return tty.Press{Key: tty.KeyRune, Rune: r} }
 
 func typeText(u *UI, st *state, text string) {
 	for _, r := range text {
-		u.handle(st, rune_(r))
+		u.handle(st, pressRune(r))
 	}
 }
 
@@ -221,7 +221,7 @@ func TestSaveReportsFailure(t *testing.T) {
 	st := &state{}
 	typeText(u, st, "tar")
 
-	u.handle(st, rune_(0x13)) // Ctrl-S
+	u.handle(st, pressRune(0x13)) // Ctrl-S
 	if st.status == "" {
 		t.Fatal("a failed save said nothing")
 	}
@@ -234,7 +234,7 @@ func TestSaveWithoutAHandlerIsInert(t *testing.T) {
 	u := testUI(nil) // no Save
 	st := &state{}
 	typeText(u, st, "tar")
-	u.handle(st, rune_(0x13))
+	u.handle(st, pressRune(0x13))
 
 	if st.status != "" {
 		t.Errorf("ctrl-S did something without a save handler: %q", st.status)
@@ -250,8 +250,8 @@ func TestSaveWithoutAHandlerIsInert(t *testing.T) {
 func TestControlCharactersAreNotTyped(t *testing.T) {
 	u := testUI(nil)
 	st := &state{}
-	u.handle(st, rune_(0x07))
-	u.handle(st, rune_(0x1b))
+	u.handle(st, pressRune(0x07))
+	u.handle(st, pressRune(0x1b))
 
 	if len(st.query) != 0 {
 		t.Errorf("query = %q, want it empty", string(st.query))

@@ -102,19 +102,19 @@ func Open(path string) (*Reader, error) {
 func (r *Reader) decode(sections [][]byte) error {
 	var err error
 	if r.pageOffsets, r.pagesBlob, err = splitUint32Table(sections[secPages]); err != nil {
-		return fmt.Errorf("%w: pages: %v", ErrDamaged, err)
+		return fmt.Errorf("%w: pages: %w", ErrDamaged, err)
 	}
 	if r.postingOffsets, r.postingsBlob, err = splitUint32Table(sections[secPostings]); err != nil {
-		return fmt.Errorf("%w: postings: %v", ErrDamaged, err)
+		return fmt.Errorf("%w: postings: %w", ErrDamaged, err)
 	}
 	if r.terms, err = decodeStrings(sections[secTerms]); err != nil {
-		return fmt.Errorf("%w: terms: %v", ErrDamaged, err)
+		return fmt.Errorf("%w: terms: %w", ErrDamaged, err)
 	}
 	if r.names, err = decodeStrings(sections[secNames]); err != nil {
-		return fmt.Errorf("%w: names: %v", ErrDamaged, err)
+		return fmt.Errorf("%w: names: %w", ErrDamaged, err)
 	}
 	if r.units, err = decodeUnits(sections[secUnits], int(r.head.UnitCount)); err != nil {
-		return fmt.Errorf("%w: units: %v", ErrDamaged, err)
+		return fmt.Errorf("%w: units: %w", ErrDamaged, err)
 	}
 	if raw := sections[secModel]; len(raw) > 0 {
 		r.termVecs = make([]int8, len(raw))
@@ -184,13 +184,13 @@ func (r *Reader) Page(i uint32) (knowledge.Page, error) {
 	}
 	zr := flate.NewReader(bytes.NewReader(body[:n]))
 	raw, err := io.ReadAll(zr)
-	zr.Close()
+	_ = zr.Close()
 	if err != nil {
-		return knowledge.Page{}, fmt.Errorf("%w: page %d: %v", ErrDamaged, i, err)
+		return knowledge.Page{}, fmt.Errorf("%w: page %d: %w", ErrDamaged, i, err)
 	}
 	var p knowledge.Page
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return knowledge.Page{}, fmt.Errorf("%w: page %d: %v", ErrDamaged, i, err)
+		return knowledge.Page{}, fmt.Errorf("%w: page %d: %w", ErrDamaged, i, err)
 	}
 
 	r.mu.Lock()

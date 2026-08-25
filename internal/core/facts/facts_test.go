@@ -68,10 +68,13 @@ func TestEmptyAnswersEverything(t *testing.T) {
 	}
 }
 
-func TestBothImplementationsSatisfyTheInterface(t *testing.T) {
-	var _ Facts = (*Static)(nil)
-	var _ Facts = Empty{}
-}
+// Both implementations satisfy the interface. This is a compile-time
+// assertion, so it needs no test body — but it belongs next to the tests that
+// depend on it rather than buried in the source file.
+var (
+	_ Facts = (*Static)(nil)
+	_ Facts = Empty{}
+)
 
 // Guessing the remote is only safe when there is exactly one, or when one of
 // them is called origin. Guessing wrong writes to the wrong place.

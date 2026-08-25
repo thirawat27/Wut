@@ -27,8 +27,8 @@ func reader() *bufio.Reader {
 	return stdinReader
 }
 
-// tty_IsInteractive reports whether it makes sense to ask a question.
-func tty_IsInteractive() bool { return tty.IsStdinTerminal() && tty.IsStdoutTerminal() }
+// ttyIsInteractive reports whether it makes sense to ask a question.
+func ttyIsInteractive() bool { return tty.IsStdinTerminal() && tty.IsStdoutTerminal() }
 
 // confirm asks a yes/no question. A piped answer works; so does no answer at
 // all, which is read as "no" rather than as "yes, go ahead".

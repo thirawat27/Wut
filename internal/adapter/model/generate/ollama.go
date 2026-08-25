@@ -77,15 +77,24 @@ func (o *Ollama) Name() string { return "ollama:" + o.Model }
 // The probe is cheap and cached: it must not be able to add half a second to
 // an explanation on a machine with no Ollama, which is most machines.
 func (o *Ollama) Available() bool {
+	return o.availableFor(context.Background())
+}
+
+// availableFor is Available with the caller's context threaded through.
+//
+// The port cannot take a context — "is a model installed" is asked in places
+// that have none — but a probe started on behalf of a request that has since
+// been cancelled should not outlive it. Generate uses this one.
+func (o *Ollama) availableFor(ctx context.Context) bool {
 	o.probeOnce.Do(func() {
-		o.available = o.probe()
+		o.available = o.probe(ctx)
 		o.probedAt = time.Now()
 	})
 	return o.available
 }
 
-func (o *Ollama) probe() bool {
-	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+func (o *Ollama) probe(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.BaseURL+"/api/tags", nil)
@@ -183,7 +192,7 @@ type generateResponse struct {
 // "the backend checked it" and "the caller checked it" from both being true
 // and neither being done.
 func (o *Ollama) Generate(ctx context.Context, req port.GenRequest) (port.GenResult, error) {
-	if !o.Available() {
+	if !o.availableFor(ctx) {
 		return port.GenResult{}, port.ErrNoGenerator
 	}
 	started := time.Now()

@@ -11,6 +11,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,24 +72,15 @@ func wut(t *testing.T) func(args ...string) (stdout, stderr string, code int) {
 		cmd.Stderr = &errBuf
 		err := cmd.Run()
 		code := 0
-		var exitErr *exec.ExitError
 		if err != nil {
-			if ok := asExitError(err, &exitErr); ok {
-				code = exitErr.ExitCode()
-			} else {
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
 				t.Fatalf("running %v: %v", args, err)
 			}
+			code = exitErr.ExitCode()
 		}
 		return out.String(), errBuf.String(), code
 	}
-}
-
-func asExitError(err error, target **exec.ExitError) bool {
-	e, ok := err.(*exec.ExitError)
-	if ok {
-		*target = e
-	}
-	return ok
 }
 
 // I3 — a destructive command must never reach stdout in shell mode, because

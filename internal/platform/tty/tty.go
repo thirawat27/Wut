@@ -40,7 +40,7 @@ type Terminal struct {
 func Open() (*Terminal, error) {
 	in, out, same, err := openPlatform()
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrNoTerminal, err)
+		return nil, fmt.Errorf("%w: %w", ErrNoTerminal, err)
 	}
 	return &Terminal{In: in, Out: out, sameFile: same}, nil
 }
