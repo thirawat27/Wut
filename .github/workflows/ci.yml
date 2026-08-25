@@ -21,7 +21,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # Not `go-version-file: go.mod`. That resolves to exactly the go
+          # directive — 1.25.0 — whose standard library govulncheck reports as
+          # vulnerable, and which is older than the Go some tools are built
+          # with. The directive stays the language floor; this is the toolchain.
+          go-version: 'stable'
           cache: true
 
       - name: gofmt
@@ -41,9 +45,12 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          # v9 is the first line of the action that installs golangci-lint v2,
+          # which is what .golangci.yml is written for. The action's own v6
+          # installs v1.64, and v1 reads a v2 config as a config error.
+          version: v2.13.1
 
   architecture:
     # The rules that keep the design from decaying, run as their own job so a
@@ -55,7 +62,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # See the Lint job: the go.mod directive is the language floor,
+          # not the toolchain to build with.
+          go-version: 'stable'
           cache: true
       - run: go test -v ./internal/arch/...
 
@@ -71,9 +80,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # See the Lint job: the go.mod directive is the language floor,
+          # not the toolchain to build with.
+          go-version: 'stable'
           cache: true
       - name: Test with race detector
+        # bash on every OS, deliberately. The Windows runner's default shell
+        # is pwsh, which splits `-coverprofile=coverage.out` at the dot and
+        # passes `.out` to the go tool as a package path.
+        shell: bash
         run: go test -race -shuffle=on -coverprofile=coverage.out ./...
       - name: Coverage gate
         if: matrix.os == 'ubuntu-latest'
@@ -104,7 +119,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # See the Lint job: the go.mod directive is the language floor,
+          # not the toolchain to build with.
+          go-version: 'stable'
           cache: true
 
       - name: Install the shells (Linux)
@@ -148,7 +165,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # See the Lint job: the go.mod directive is the language floor,
+          # not the toolchain to build with.
+          go-version: 'stable'
           cache: true
       - name: Build the knowledge index
         run: |
@@ -165,7 +184,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # See the Lint job: the go.mod directive is the language floor,
+          # not the toolchain to build with.
+          go-version: 'stable'
           cache: true
       - name: govulncheck
         run: |
@@ -193,7 +214,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # See the Lint job: the go.mod directive is the language floor,
+          # not the toolchain to build with.
+          go-version: 'stable'
           cache: true
       - name: Cross-compile
         # CGO_ENABLED=0 is not incidental. The whole matrix builds from one

@@ -35,7 +35,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # The current patch release, not the go.mod directive. A release
+          # built from a known-vulnerable standard library is not a release.
+          go-version: 'stable'
           cache: true
 
       - name: Verify the tag matches the version in the source
