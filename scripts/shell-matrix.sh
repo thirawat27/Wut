@@ -23,8 +23,11 @@ set -uo pipefail
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
 WUT_BIN="${WUT_BIN:-$ROOT/build/wut}"
 
-# Full class promises automatic capture, so it is tested for it.
-FULL_CLASS="zsh fish nu xonsh elvish bash"
+# Full class promises automatic capture, so it is tested for it. Bash is kept
+# separate because the support table declares it Full-later until coexistence
+# with other DEBUG/PROMPT_COMMAND owners is proved.
+FULL_CLASS="zsh fish nu xonsh elvish"
+FULL_LATER_CLASS="bash"
 # Manual class promises only `wut fix "<command>"`, so that is all it is asked.
 MANUAL_CLASS="sh dash ksh"
 
@@ -47,7 +50,7 @@ skipped() { skip=$((skip+1)); printf '  %s %-9s %s\n' "$(grey SKIP)" "$1" "$(gre
 
 if [ "${1:-}" = "--docker" ]; then
 	shift
-	exec docker run --rm -v "$ROOT:/src" -w /src golang:1.23-bookworm bash -c "
+	exec docker run --rm -v "$ROOT:/src" -w /src golang:1.25-bookworm bash -c "
 		set -e
 		apt-get update -qq >/dev/null
 		DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zsh fish ksh dash elvish >/dev/null
@@ -61,7 +64,7 @@ if [ ! -x "$WUT_BIN" ]; then
 	(cd "$ROOT" && go build -o "$WUT_BIN" ./cmd/wut) || exit 1
 fi
 
-WANTED=${*:-$FULL_CLASS $MANUAL_CLASS}
+WANTED=${*:-$FULL_CLASS $FULL_LATER_CLASS $MANUAL_CLASS}
 
 # rc_path echoes where WUT installs its block for a shell, relative to HOME.
 # It mirrors the RCFiles table in internal/adapter/shell/shells.go; if the two
@@ -181,10 +184,25 @@ run_full() {
 	case "$shell" in
 		bash)   session_script "$shell" | "$bin" --rcfile "$rcfile" -i >/dev/null 2>&1 ;;
 		zsh)    session_script "$shell" | ZDOTDIR="$HOME" "$bin" -i >/dev/null 2>&1 ;;
-		fish)   session_script "$shell" | "$bin" -i >/dev/null 2>&1 ;;
-		nu)     session_script "$shell" | "$bin" --config "$rcfile" -i >/dev/null 2>&1 ;;
+		fish)
+			if [ "$(uname -s)" = "Darwin" ]; then
+				session_script "$shell" | script -q /dev/null "$bin" -i >/dev/null 2>&1
+			else
+				session_script "$shell" | script -qefc "$bin -i" /dev/null >/dev/null 2>&1
+			fi
+			;;
+		nu)
+			session_script "$shell" | python3 "$ROOT/scripts/pty-session.py" \
+				"$bin" --config "$rcfile" -i >/dev/null 2>&1
+			;;
 		xonsh)  session_script "$shell" | "$bin" -i >/dev/null 2>&1 ;;
-		elvish) session_script "$shell" | "$bin" -rc "$rcfile" -i >/dev/null 2>&1 ;;
+		elvish)
+			if [ "$(uname -s)" = "Darwin" ]; then
+				session_script "$shell" | script -q /dev/null "$bin" -rc "$rcfile" -i >/dev/null 2>&1
+			else
+				session_script "$shell" | script -qefc "$bin -rc $rcfile -i" /dev/null >/dev/null 2>&1
+			fi
+			;;
 		*)      session_script "$shell" | "$bin" -i >/dev/null 2>&1 ;;
 	esac
 
@@ -279,6 +297,17 @@ printf '\nwut shell matrix — %s\n\n' "$($WUT_BIN version 2>/dev/null | head -n
 
 printf 'Full class — automatic capture is promised, so it is proved\n'
 for shell in $FULL_CLASS; do
+	case " $WANTED " in *" $shell "*) ;; *) continue ;; esac
+	bin=$(command -v "$shell" 2>/dev/null)
+	if [ -z "$bin" ]; then
+		skipped "$shell" "not installed here"
+		continue
+	fi
+	run_full "$shell" "$bin"
+done
+
+printf '\nFull-later — implementation smoke test, not a support-class promise\n'
+for shell in $FULL_LATER_CLASS; do
 	case " $WANTED " in *" $shell "*) ;; *) continue ;; esac
 	bin=$(command -v "$shell" 2>/dev/null)
 	if [ -z "$bin" ]; then

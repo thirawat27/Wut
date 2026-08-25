@@ -2,4 +2,5 @@
 /dist/
 *.exe
 coverage.out
+__pycache__/
 .DS_Store

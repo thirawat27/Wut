@@ -181,12 +181,40 @@ func TestFullClassShellsRenderAWorkingBlock(t *testing.T) {
 			// The record separators are the wire format. If they are missing,
 			// the hook is writing something WUT cannot read.
 			if !strings.Contains(block, `\037`) && !strings.Contains(block, "0x1F") &&
-				!strings.Contains(block, `\x1f`) && !strings.Contains(block, "u{1f}") &&
+				!strings.Contains(block, `\x1f`) && !strings.Contains(block, `\u001f`) &&
 				!strings.Contains(block, "char --integer 31") {
 				t.Error("block never writes a unit separator, so it cannot be producing records")
 			}
 			if !strings.Contains(block, p.SessionsDir) {
 				t.Error("block does not reference the sessions directory")
+			}
+		})
+	}
+}
+
+// These fragments guard failures found only after generated blocks were
+// sourced by their real interpreters. Keeping the checks beside Render makes
+// the generator fail fast before the slower live-shell matrix runs.
+func TestGeneratedHooksCarryTheirRuntimeRequirements(t *testing.T) {
+	p := Params{SessionsDir: "/tmp/wut/sessions"}
+	tests := map[string][]string{
+		"bash":   {"__wut_tier='T0'"},
+		"zsh":    {"zmodload zsh/mathfunc", `__wut_nf="$__wut_dir/$WUT_SESSION.nf"`},
+		"nu":     {"$env.config? | default {}", "commandline", "WUT_NF"},
+		"xonsh":  {"@events.on_command_not_found", `"notfound": ""`},
+		"elvish": {`\u001f`, `\u001e`},
+	}
+	for name, fragments := range tests {
+		t.Run(name, func(t *testing.T) {
+			spec, _ := Lookup(name)
+			block := Render(spec, p)
+			for _, fragment := range fragments {
+				if !strings.Contains(block, fragment) {
+					t.Errorf("generated block does not contain %q", fragment)
+				}
+			}
+			if strings.Contains(block, `\u{`) {
+				t.Error("generated block contains an unsupported braced Unicode escape")
 			}
 		})
 	}

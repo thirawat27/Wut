@@ -102,9 +102,11 @@ func renderBash(p Params) string {
   esac
 
   # Only defined when nothing else owns it. If another tool already handles
-  # unknown commands, WUT stays out of the way and loses T0.5 rather than
-  # breaking that tool.
-  if ! declare -F command_not_found_handle >/dev/null 2>&1; then
+  # unknown commands, WUT stays out of the way and stamps T0 rather than
+  # claiming a T0.5 value it cannot observe.
+  if declare -F command_not_found_handle >/dev/null 2>&1; then
+    __wut_tier='T0'
+  else
     command_not_found_handle() {
       printf '%s' "$1" >"$__wut_nf" 2>/dev/null
       printf 'bash: %s: command not found\n' "$1" >&2
@@ -174,10 +176,12 @@ func renderZsh(p Params) string {
 	var b strings.Builder
 	b.WriteString(`if (( $+commands[wut] )); then
   zmodload zsh/datetime 2>/dev/null
+  zmodload zsh/mathfunc 2>/dev/null
   : ${WUT_SESSION:=z$$}
   export WUT_SESSION
   __wut_dir=` + shQuote(p.SessionsDir) + `
   __wut_rec="$__wut_dir/$WUT_SESSION.rec"
+  __wut_nf="$__wut_dir/$WUT_SESSION.nf"
   __wut_seq=0
   __wut_cmd=''
   __wut_notfound=''
@@ -200,6 +204,10 @@ func renderZsh(p Params) string {
     if [[ -n $__wut_cmd ]]; then
       __wut_dur=$(( int(EPOCHREALTIME * 1000) - __wut_t0 ))
       (( __wut_dur < 0 )) && __wut_dur=0
+      if [[ -s $__wut_nf ]]; then
+        IFS= read -r __wut_notfound < "$__wut_nf"
+        : > "$__wut_nf"
+      fi
       __wut_seq=$(( __wut_seq + 1 ))
       __wut_write
       __wut_cmd=''
@@ -213,9 +221,11 @@ func renderZsh(p Params) string {
     add-zsh-hook precmd __wut_precmd
   fi
 
-  if (( ! $+functions[command_not_found_handler] )); then
+  if (( $+functions[command_not_found_handler] )); then
+    __wut_tier='T0'
+  else
     command_not_found_handler() {
-      __wut_notfound=$1
+      printf '%s' "$1" >"$__wut_nf" 2>/dev/null
       print -u2 "zsh: command not found: $1"
       return 127
     }
@@ -360,21 +370,40 @@ func renderNushell(p Params) string {
 	return `if (which wut | is-not-empty) {
   $env.WUT_SESSION = ($env.WUT_SESSION? | default $"n(random chars -l 8)")
   $env.WUT_REC = ` + nuQuote(p.SessionsDir) + ` + $"/($env.WUT_SESSION).rec"
+  $env.WUT_NF = ` + nuQuote(p.SessionsDir) + ` + $"/($env.WUT_SESSION).nf"
   $env.WUT_SEQ = 0
+  $env.WUT_CMD = ""
+  $env.WUT_TIER = "T0.5"
 
-  $env.config = ($env.config | upsert hooks.pre_prompt (
-    ($env.config.hooks.pre_prompt? | default []) | append {||
+  let current_config = ($env.config? | default {})
+  let current_hooks = ($current_config.hooks? | default {})
+  let pre_execution = (($current_hooks.pre_execution? | default []) | append {||
+    $env.WUT_CMD = (commandline)
+  })
+  let pre_prompt = (($current_hooks.pre_prompt? | default []) | append {||
       let code = ($env.LAST_EXIT_CODE? | default 0)
-      let cmd = (history | last 1 | get command.0? | default "")
+      let cmd = $env.WUT_CMD
       if ($cmd | is-not-empty) {
+        let not_found = if ($env.WUT_NF | path exists) { open --raw $env.WUT_NF } else { "" }
         $env.WUT_SEQ = $env.WUT_SEQ + 1
         let us = (char --integer 31)
         let rs = (char --integer 30)
-        let rec = $"1($us)($env.WUT_SEQ)($us)0($us)0($us)($code)($us)nu($us)($env.PWD)($us)T0($us)($us)($cmd)($rs)"
+        let rec = $"1($us)($env.WUT_SEQ)($us)0($us)0($us)($code)($us)nu($us)($env.PWD)($us)($env.WUT_TIER)($us)($not_found)($us)($cmd)($rs)"
         $rec | save --append --raw $env.WUT_REC
+        "" | save --force --raw $env.WUT_NF
+        $env.WUT_CMD = ""
       }
+    })
+  mut hooks = ($current_hooks | upsert pre_execution $pre_execution | upsert pre_prompt $pre_prompt)
+  if (($current_hooks.command_not_found? | describe) == "nothing") {
+    $hooks.command_not_found = {|name|
+      $name | save --force --raw $env.WUT_NF
+      null
     }
-  ))
+  } else {
+    $env.WUT_TIER = "T0"
+  }
+  $env.config = ($current_config | upsert hooks $hooks)
 
   def --wrapped wut [...args] {
     if ($args | is-empty) or ($args.0 in ["fix" "f"]) {
@@ -402,7 +431,14 @@ func renderXonsh(p Params) string {
     _wut_dir = ` + pyQuote(p.SessionsDir) + `
     if "WUT_SESSION" not in ${...}:
         $WUT_SESSION = "x%d" % _wut_os.getpid()
-    _wut_state = {"seq": 0}
+    _wut_state = {"seq": 0, "notfound": ""}
+
+    @events.on_command_not_found
+    def _wut_not_found(cmd=None, **kw):
+        try:
+            _wut_state["notfound"] = str((cmd or [""])[0])
+        except Exception:
+            _wut_state["notfound"] = ""
 
     @events.on_postcommand
     def _wut_post(cmd=None, rtn=None, out=None, ts=None, **kw):
@@ -411,9 +447,11 @@ func renderXonsh(p Params) string {
             start = int((ts[0] if ts else _wut_time.time()) * 1000)
             dur = int(((ts[1] - ts[0]) * 1000) if ts else 0)
             path = _wut_os.path.join(_wut_dir, "%s.rec" % $WUT_SESSION)
+            notfound = _wut_state["notfound"]
+            _wut_state["notfound"] = ""
             fields = ["1", str(_wut_state["seq"]), str(start), str(dur),
                       str(rtn if rtn is not None else 0), "xonsh",
-                      _wut_os.getcwd(), "T1", "", (cmd or "").strip()]
+                      _wut_os.getcwd(), "T1", notfound, (cmd or "").strip()]
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write("\x1f".join(fields) + "\x1e")
         except Exception:
@@ -455,7 +493,7 @@ func renderElvish(p Params) string {
       var code = 0
       if (not-eq $m[error] $nil) { set code = 1 }
       var dur = (printf '%.0f' (* $m[duration] 1000))
-      printf "1\u{1f}%s\u{1f}0\u{1f}%s\u{1f}%s\u{1f}elvish\u{1f}%s\u{1f}T0\u{1f}\u{1f}%s\u{1e}" ^
+      printf "1\u001f%s\u001f0\u001f%s\u001f%s\u001felvish\u001f%s\u001fT0\u001f\u001f%s\u001e" ^
         $wut-seq $dur $code $pwd $cmd >> $wut-rec
     }
   }]

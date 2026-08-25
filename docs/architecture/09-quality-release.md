@@ -92,7 +92,7 @@ asked to prove capture they do not have.
 A container matrix runs a scripted session per Full-class shell:
 
 ```
-for shell in zsh fish nu xonsh elvish bash; do
+for shell in zsh fish nu xonsh elvish; do
   1. wut shell install --yes
   2. open a fresh session
   3. run a command that succeeds  -> assert a T0 record exists, exit 0
@@ -103,6 +103,11 @@ for shell in zsh fish nu xonsh elvish bash; do
   8. wut shell uninstall          -> assert the rc file is byte-identical to the backup
 done
 ```
+
+`bash` runs the same implementation smoke test in a separate **Full — later**
+section. A green smoke test does not promote it to Full: coexistence with an
+existing `DEBUG` trap, `PROMPT_COMMAND`, bash-preexec, and Starship remains the
+promotion gate.
 
 PowerShell 7 and Windows PowerShell run on the Windows runner. Manual-class
 shells (`sh`, `dash`, `ksh`, `cmd.exe`) assert only steps 1, 7, and 8 plus

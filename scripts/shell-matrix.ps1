@@ -88,8 +88,17 @@ function Test-PowerShellHost {
         $env:PATH = (Split-Path -Parent $WutBin) + ';' + $saved['PATH']
 
         # Fail closed if the sandbox is not really a sandbox.
-        $preview = & $WutBin shell install --dry-run --shells $Shell 2>&1 | Out-String
-        if ($preview -notmatch [regex]::Escape($sandbox)) {
+        $preview = & $WutBin shell install --dry-run --shells $Shell --output json 2>&1 | Out-String
+        try {
+            $previewReport = $preview | ConvertFrom-Json -ErrorAction Stop
+            $target = @($previewReport.changes)[0].rc_file
+        }
+        catch {
+            $target = $null
+        }
+        $sandboxPrefix = [System.IO.Path]::GetFullPath($sandbox).TrimEnd('\') + '\'
+        $targetPath = if ($target) { [System.IO.Path]::GetFullPath($target) } else { '' }
+        if (-not $targetPath.StartsWith($sandboxPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
             Write-Host ''
             Write-Host "  ABORT: wut would write outside the sandbox $sandbox" -ForegroundColor Red
             Write-Host '  Refusing to run — this would edit a real PowerShell profile.'
