@@ -1,0 +1,112 @@
+# GoReleaser is the only build path. There is no Makefile and no build script:
+# the prototype had four ways to produce a binary and they disagreed with each
+# other.
+version: 2
+
+project_name: wut
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: wut
+    main: ./cmd/wut
+    binary: wut
+    env:
+      # Not incidental. The whole platform matrix cross-compiles from one
+      # runner only while the binary is free of cgo — which is also why the
+      # optional wording model is a local runtime the user already has, rather
+      # than a linked inference library.
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos: [linux, darwin, windows, freebsd, openbsd, netbsd]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: openbsd
+        goarch: arm64
+      - goos: netbsd
+        goarch: arm64
+
+archives:
+  - id: wut
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - docs/architecture/**/*
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+
+# Keyless signing: no GPG key to hold, rotate, or leak, and anyone can verify
+# against the workflow identity with cosign.
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat'
+      order: 0
+    - title: Fixes
+      regexp: '^fix'
+      order: 1
+    - title: Everything else
+      order: 99
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Verifying this release
+
+    ```
+    cosign verify-blob checksums.txt \
+      --certificate checksums.txt.pem \
+      --signature checksums.txt.sig \
+      --certificate-identity-regexp 'https://github.com/thirawat27/wut/.*' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com
+    sha256sum -c checksums.txt --ignore-missing
+    ```
+
+    ## Installing
+
+    ```
+    curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | sh
+    ```
+
+    The script verifies the SHA-256 of the archive against `checksums.txt`
+    before it unpacks anything, and refuses to install if they disagree. On
+    Windows, `scripts/install.ps1` does the same.
+
+    Then run `wut shell install` and open a new shell.

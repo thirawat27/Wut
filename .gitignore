@@ -1,0 +1,5 @@
+/build/
+/dist/
+*.exe
+coverage.out
+.DS_Store

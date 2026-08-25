@@ -1,0 +1,22 @@
+# Dependency updates.
+#
+# Weekly rather than daily: three direct dependencies do not generate enough
+# churn to justify a pull request every morning, and a bot nobody reads is
+# worse than no bot.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore

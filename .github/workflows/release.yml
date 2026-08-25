@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and sign without publishing'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build, sign, publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # Needed to create the release.
+      contents: write
+      # Keyless signing: cosign gets its identity from this token, so there is
+      # no private key to hold, rotate, or leak, and anyone can verify a
+      # release against the workflow that produced it.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # GoReleaser derives the changelog from history, so a shallow clone
+          # produces a release whose notes are silently empty.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify the tag matches the version in the source
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          source=$(grep -oP 'var version = "\K[^"]+' cmd/wut/main.go)
+          if [ "${tag#v}" != "$source" ]; then
+            echo "tag $tag does not match the version in cmd/wut/main.go ($source)"
+            echo "A release whose binary reports a different version than its tag"
+            echo "makes every bug report ambiguous. Fix one of them and re-tag."
+            exit 1
+          fi
+
+      - uses: sigstore/cosign-installer@v3
+      - uses: anchore/sbom-action/download-syft@v0
+
+      - name: Release
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: >-
+            release --clean
+            ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--snapshot --skip=publish,sign' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Keep the artifacts from a dry run
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+          retention-days: 7

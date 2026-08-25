@@ -1,0 +1,47 @@
+# Linters chosen for the defect classes the prototype audit actually found, not
+# for a maximal list. Each one below has a finding behind it.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    # The prototype leaked HTTP response bodies in the sync path.
+    - bodyclose
+    # The prototype used a client-wide 5s timeout for a multi-megabyte download, so
+    # `wut db sync` could not finish on a normal connection. noctx and
+    # contextcheck catch the shape of that mistake.
+    - noctx
+    - contextcheck
+    # The prototype compared errors by string in places and swallowed them in others.
+    - errorlint
+    - nilerr
+    # The tool touches rc files, spawns probes, and reads untrusted output.
+    - gosec
+    # Dead parameters and forgotten assignments were how the performance
+    # package accumulated 2,000 unreferenced lines.
+    - unparam
+    - wastedassign
+    - unconvert
+    - misspell
+    - revive
+
+linters-settings:
+  gosec:
+    excludes:
+      # G204 flags every exec.Command. The fact prober is the one place that
+      # is allowed, and it is guarded by an argv-exact allowlist plus an AST
+      # test in internal/arch that fails the build if os/exec appears anywhere
+      # else. That is a stronger guarantee than this linter can express.
+      - G204
+  revive:
+    rules:
+      - name: exported
+        disabled: true
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters: [gosec, unparam]
