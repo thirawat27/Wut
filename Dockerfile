@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.26 AS builder
+FROM golang:1.27 AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git make ca-certificates
