@@ -79,6 +79,56 @@ http_get_json() {
     fi
 }
 
+# verify_checksum confirms the downloaded archive matches the SHA-256 published
+# in the release's checksums.txt. Without this the installer executes whatever
+# bytes it received, with no way to notice tampering or a truncated download.
+#
+# Set WUT_SKIP_CHECKSUM=1 only to install a release published before
+# checksums.txt existed.
+verify_checksum() {
+    local release_json="$1" temp_dir="$2" archive_path="$3" asset_name="$4"
+
+    if [ "${WUT_SKIP_CHECKSUM:-0}" = "1" ]; then
+        warn "Checksum verification skipped (WUT_SKIP_CHECKSUM=1)"
+        return 0
+    fi
+
+    local checksums_url checksums_path
+    checksums_url="$(find_asset_url "$release_json" "checksums.txt")"
+    if [ -z "$checksums_url" ]; then
+        die "This release publishes no checksums.txt, so the download cannot be verified.
+       Re-run with WUT_SKIP_CHECKSUM=1 if you accept that risk."
+    fi
+
+    checksums_path="${temp_dir}/checksums.txt"
+    http_get "$checksums_url" "$checksums_path"
+
+    local expected actual
+    expected="$(awk -v name="$asset_name" '$2 == name || $2 == "*" name { print $1; exit }' "$checksums_path")"
+    if [ -z "$expected" ]; then
+        die "No checksum entry for ${asset_name} in checksums.txt"
+    fi
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual="$(sha256sum "$archive_path" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        actual="$(shasum -a 256 "$archive_path" | awk '{print $1}')"
+    elif command -v openssl >/dev/null 2>&1; then
+        actual="$(openssl dgst -sha256 "$archive_path" | awk '{print $NF}')"
+    else
+        die "No SHA-256 tool found (sha256sum, shasum, or openssl). Cannot verify the download."
+    fi
+
+    if [ "$expected" != "$actual" ]; then
+        die "Checksum mismatch for ${asset_name}.
+       expected: ${expected}
+       actual:   ${actual}
+       Refusing to install. Do not run this file."
+    fi
+
+    success "Checksum verified (sha256)"
+}
+
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -166,6 +216,45 @@ find_asset_url() {
     '
 }
 
+# list_asset_names prints every asset name in a release, so a mismatch can be
+# reported with the names that actually exist rather than a bare "not found".
+list_asset_names() {
+    printf '%s\n' "$1" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+}
+
+# resolve_archive_name finds the archive for this OS/arch.
+#
+# GoReleaser names archives with the version stripped of its leading "v"
+# (wut_1.0.2_Linux_x86_64.tar.gz). The literal name this script used to build
+# kept the "v", so it never matched a published asset. Both spellings are tried,
+# then a pattern search, so a change to the archive template degrades into a
+# clear error instead of a silent miss.
+resolve_archive_name() {
+    local release_json="$1" tag_name="$2" os_name="$3" arch_name="$4"
+    local bare_version="${tag_name#v}"
+    local candidate
+
+    for candidate in \
+        "wut_${bare_version}_${os_name}_${arch_name}.tar.gz" \
+        "wut_${tag_name}_${os_name}_${arch_name}.tar.gz"
+    do
+        if [ -n "$(find_asset_url "$release_json" "$candidate")" ]; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+
+    candidate="$(list_asset_names "$release_json" \
+        | grep -E "^wut_.*_${os_name}_${arch_name}\.tar\.gz$" \
+        | head -n1)"
+    if [ -n "$candidate" ]; then
+        printf '%s' "$candidate"
+        return 0
+    fi
+
+    return 1
+}
+
 choose_install_dir() {
     if [ -w "/usr/local/bin" ]; then
         echo "/usr/local/bin"
@@ -241,9 +330,14 @@ main() {
     tag_name="$(extract_json_field "$release_json" "tag_name")"
     [ -n "$tag_name" ] || die "Could not determine release version from GitHub API"
 
-    asset_name="wut_${tag_name}_${os_name}_${arch_name}.tar.gz"
+    if ! asset_name="$(resolve_archive_name "$release_json" "$tag_name" "$os_name" "$arch_name")"; then
+        error "No ${os_name}/${arch_name} archive found in release ${tag_name}."
+        error "Assets in this release:"
+        list_asset_names "$release_json" | sed 's/^/  - /' >&2
+        exit 1
+    fi
     asset_url="$(find_asset_url "$release_json" "$asset_name")"
-    [ -n "$asset_url" ] || die "Asset '${asset_name}' not found in release ${tag_name}"
+    [ -n "$asset_url" ] || die "Could not resolve a download URL for '${asset_name}'"
 
     local temp_dir archive_path extract_dir
     temp_dir="$(mktemp -d)"
@@ -254,6 +348,8 @@ main() {
 
     info "Downloading ${asset_name}"
     http_get "$asset_url" "$archive_path"
+
+    verify_checksum "$release_json" "$temp_dir" "$archive_path" "$asset_name"
 
     info "Extracting archive"
     tar -xzf "$archive_path" -C "$extract_dir"

@@ -114,7 +114,10 @@ func (s *Storage) GetHistory(ctx context.Context, limit int) ([]CommandExecution
 	var entries []CommandExecution
 
 	err := s.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(historyBucketName))
+		bucket, err := requireBucket(tx, historyBucketName)
+		if err != nil {
+			return err
+		}
 		if bucket == nil {
 			return nil
 		}
@@ -192,7 +195,10 @@ func (s *Storage) SearchHistoryMatches(ctx context.Context, query string, limit 
 	scanRank := 0
 
 	err := s.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(historyBucketName))
+		bucket, err := requireBucket(tx, historyBucketName)
+		if err != nil {
+			return err
+		}
 		if bucket == nil {
 			return nil
 		}
@@ -351,7 +357,10 @@ func (s *Storage) TrimHistory(ctx context.Context, maxEntries int) error {
 	}
 
 	return s.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(historyBucketName))
+		bucket, err := requireBucket(tx, historyBucketName)
+		if err != nil {
+			return err
+		}
 		if bucket == nil {
 			return nil
 		}
@@ -395,7 +404,10 @@ func (s *Storage) GetRecentUniqueHistory(ctx context.Context, limit int, scanLim
 	scanned := 0
 
 	err := s.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(historyBucketName))
+		bucket, err := requireBucket(tx, historyBucketName)
+		if err != nil {
+			return err
+		}
 		if bucket == nil {
 			return nil
 		}
@@ -454,7 +466,10 @@ func (s *Storage) GetHistoryCommandSummaries(ctx context.Context, scanLimit int)
 	scanned := 0
 
 	err := s.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(historyBucketName))
+		bucket, err := requireBucket(tx, historyBucketName)
+		if err != nil {
+			return err
+		}
 		if bucket == nil {
 			return nil
 		}
@@ -520,7 +535,10 @@ func (s *Storage) GetCommandUsageCount(ctx context.Context, command string, stop
 
 	count := 0
 	err := s.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(historyBucketName))
+		bucket, err := requireBucket(tx, historyBucketName)
+		if err != nil {
+			return err
+		}
 		if bucket == nil {
 			return nil
 		}
@@ -572,7 +590,10 @@ func (s *Storage) GetHistoryImportState(ctx context.Context, sourceKey string) (
 			return err
 		}
 
-		bucket := tx.Bucket([]byte(historyImportStateBucket))
+		bucket, err := requireBucket(tx, historyImportStateBucket)
+		if err != nil {
+			return err
+		}
 		if bucket == nil {
 			return nil
 		}

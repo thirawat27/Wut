@@ -1,5 +1,8 @@
-name: Release CI
+name: Release
 
+# GoReleaser is the single release path. The previous hand-written matrix
+# duplicated build and packaging logic that .goreleaser.yaml already described,
+# and shipped without checksums, SBOM, or signatures.
 on:
   push:
     tags:
@@ -7,146 +10,158 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: Git tag to create or update the release for
+        description: Git tag to release (must already exist)
         required: true
         type: string
-      release_name:
-        description: Optional display name for the GitHub release
-        required: false
-        default: ""
-        type: string
-      draft:
-        description: Create the release as a draft
+      dry_run:
+        description: Build and package without publishing
         required: false
         default: false
         type: boolean
 
-jobs:
-  build:
-    runs-on: ${{ matrix.runs_on }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: linux
-            runs_on: ubuntu-latest
-            artifact_suffix: lnx
-            archive_ext: tar.gz
-            binary_path: dist/bin/wut
-            bundle_dir: dist/bundle/wut
-          - target: macos
-            runs_on: macos-latest
-            artifact_suffix: osx
-            archive_ext: tar.gz
-            binary_path: dist/bin/wut
-            bundle_dir: dist/bundle/wut
-          - target: windows-x64
-            runs_on: windows-latest
-            artifact_suffix: win-x64
-            archive_ext: zip
-            binary_path: dist/bin/wut.exe
-            bundle_dir: dist/bundle/wut
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
-    steps:
-      - uses: actions/checkout@v4
+permissions:
+  contents: read
 
-      - uses: actions/setup-go@v5
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The release must not be able to ship code that fails its own gates.
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Download Go modules
-        run: go mod download
-
-      - name: Run unit tests
-        run: go test ./...
+      - name: Check formatting
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l . | grep -v '^dist/' | grep -v '^build/' || true)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::Not gofmt-clean: $unformatted"
+            exit 1
+          fi
 
       - name: Run vet
         run: go vet ./...
 
-      - name: Build binary (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
+      - name: Run tests with race detector
+        run: go test -race ./...
+
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod
+
+  release:
+    name: Build and publish
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # create the GitHub release
+      packages: write # push container images to ghcr.io
+      id-token: write # keyless cosign signing + build provenance
+      attestations: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # GoReleaser derives the changelog from history, so it needs all of it.
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref }}
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Produces the CycloneDX SBOM that .goreleaser.yaml's `sboms` block calls.
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      # Keyless signing: the signing identity is this workflow's OIDC token, so
+      # no private key is stored anywhere.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Prefer the curated CHANGELOG section over commit-derived notes. The
+      # script falls back to generated notes when the section is missing.
+      - name: Build release notes from CHANGELOG
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+        run: bash ./.github/scripts/release_notes.sh CHANGELOG.md "$RELEASE_TAG" release-notes.md
+
+      # Optional publishers are skipped when their credentials are absent, so a
+      # release never fails because a downstream package feed is unconfigured.
+      - name: Decide which publishers to skip
+        id: skip
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
         run: |
           set -euo pipefail
-          mkdir -p dist/bin
-          commit="${GITHUB_SHA::7}"
-          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          go build -trimpath -ldflags "-s -w -X main.Version=${RELEASE_TAG} -X main.BuildTime=${build_time} -X main.Commit=${commit}" -o "${{ matrix.binary_path }}" .
+          skips=()
+          if [ -z "${CHOCOLATEY_API_KEY:-}" ]; then
+            echo "::notice::CHOCOLATEY_API_KEY not set - skipping the Chocolatey publisher."
+            skips+=("chocolatey")
+          fi
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}" = "true" ]; then
+            skips+=("publish" "announce")
+          fi
+          if [ ${#skips[@]} -eq 0 ]; then
+            echo "flags=" >> "$GITHUB_OUTPUT"
+          else
+            printf 'flags=--skip=%s\n' "$(IFS=,; echo "${skips[*]}")" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Build binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist/bin | Out-Null
-          $commit = $env:GITHUB_SHA.Substring(0, 7)
-          $buildTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-          go build -trimpath -ldflags "-s -w -X main.Version=$env:RELEASE_TAG -X main.BuildTime=$buildTime -X main.Commit=$commit" -o "${{ matrix.binary_path }}" .
+      - name: Run GoReleaser
+        id: goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean --release-notes=release-notes.md ${{ steps.skip.outputs.flags }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
 
-      - name: Stage portable bundle (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: bash ./.github/scripts/portable_bundle.sh "${{ matrix.binary_path }}" "${{ matrix.bundle_dir }}"
+      # SLSA build provenance, verifiable with `gh attestation verify`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
 
-      - name: Stage portable bundle (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: .github/scripts/portable_bundle.ps1 -BinaryPath "${{ matrix.binary_path }}" -OutputDir "${{ matrix.bundle_dir }}"
-
-      - name: Package release artifact (Unix)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          tar -czf "dist/wut_${RELEASE_TAG}_${{ matrix.artifact_suffix }}.tar.gz" -C "$(dirname "${{ matrix.bundle_dir }}")" "$(basename "${{ matrix.bundle_dir }}")"
-
-      - name: Package release artifact (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path "${{ matrix.bundle_dir }}" -DestinationPath "dist/wut_${env:RELEASE_TAG}_${{ matrix.artifact_suffix }}.zip" -Force
-
-      - name: Upload packaged artifact
+      - name: Upload release artifacts for inspection
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.artifact_suffix }}
-          path: ${{ github.workspace }}/dist/wut_${{ env.RELEASE_TAG }}_${{ matrix.artifact_suffix }}.*
-          if-no-files-found: error
-
-  publish-release:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
-      RELEASE_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.release_name || '' }}
-      RELEASE_DRAFT: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download packaged artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: release-assets
-          pattern: release-*
-          merge-multiple: true
-
-      - name: Generate release notes
-        shell: bash
-        run: bash ./.github/scripts/release_notes.sh CHANGELOG.md "${{ env.RELEASE_TAG }}" release-notes.md
-
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          target_commitish: ${{ github.sha }}
-          name: ${{ env.RELEASE_NAME != '' && env.RELEASE_NAME || env.RELEASE_TAG }}
-          draft: ${{ env.RELEASE_DRAFT == 'true' }}
-          body_path: release-notes.md
-          files: release-assets/*
+          name: release-dist
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt*
+            dist/*.sbom.json
+          if-no-files-found: warn
+          retention-days: 14

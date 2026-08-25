@@ -3,6 +3,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -10,9 +11,7 @@ import (
 	"syscall"
 
 	"wut/internal/config"
-	"wut/internal/health"
 	"wut/internal/logger"
-	"wut/internal/metrics"
 	"wut/internal/ui"
 
 	"github.com/charmbracelet/lipgloss"
@@ -41,6 +40,12 @@ var (
 `,
 		Version: "", // Will be set in init()
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Flags have already been parsed by the time this runs, so a bad
+			// flag still prints usage. Anything that fails from here on is a
+			// runtime problem, and dumping the flag list at the user does not
+			// help them fix it.
+			cmd.SilenceUsage = true
+
 			if shouldSkipInitialization(cmd) {
 				return nil
 			}
@@ -51,23 +56,11 @@ var (
 
 			// Check if WUT has been initialized
 			if !config.IsInitialized() {
-				fmt.Println()
-				banner := lipgloss.NewStyle().
-					Bold(true).
-					Foreground(lipgloss.Color("#FFFFFF")).
-					Background(lipgloss.Color("#EF4444")).
-					Padding(0, 2).
-					Render("⚠  WUT has not been initialized yet!")
-				fmt.Println(banner)
-				fmt.Println()
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#9CA3AF")).Render("  Please run the setup wizard first:"))
-				fmt.Println()
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#10B981")).Bold(true).Render("    wut init"))
-				fmt.Println()
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).Render("  This will configure your settings, optionally set up shell integration,"))
-				fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).Render("  and download the command database — all in one step."))
-				fmt.Println()
-				os.Exit(1)
+				printNotInitializedNotice()
+				// Return the sentinel instead of calling os.Exit: exiting here
+				// skips PersistentPostRun (and therefore cleanup) plus every
+				// pending defer in the command chain.
+				return errNotInitialized
 			}
 
 			return nil
@@ -77,6 +70,29 @@ var (
 		},
 	}
 )
+
+// errNotInitialized signals that `wut init` has not been run yet. The notice is
+// already printed when it is returned, so Execute exits quietly on it.
+var errNotInitialized = errors.New("wut is not initialized")
+
+func printNotInitializedNotice() {
+	fmt.Println()
+	banner := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#EF4444")).
+		Padding(0, 2).
+		Render("⚠  WUT has not been initialized yet!")
+	fmt.Println(banner)
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#9CA3AF")).Render("  Please run the setup wizard first:"))
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#10B981")).Bold(true).Render("    wut init"))
+	fmt.Println()
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).Render("  This will configure your settings, optionally set up shell integration,"))
+	fmt.Println(lipgloss.NewStyle().Foreground(lipgloss.Color("#6B7280")).Render("  and download the command database — all in one step."))
+	fmt.Println()
+}
 
 // applyPremiumHelpRecursively applies the premium UI help styling to all commands
 func applyPremiumHelpRecursively(c *cobra.Command) {
@@ -104,8 +120,9 @@ func shouldSkipInitialization(cmd *cobra.Command) bool {
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
-func Execute() {
+// This is called by main.main(). It returns the process exit code so the caller
+// owns termination and every deferred cleanup here still runs.
+func Execute() int {
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -113,6 +130,7 @@ func Execute() {
 	// Handle shutdown signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 
 	go func() {
 		<-sigCh
@@ -126,15 +144,26 @@ func Execute() {
 	// Apply modern UI scheme to all registered commands
 	applyPremiumHelpRecursively(rootCmd)
 
-	if err := rootCmd.Execute(); err != nil {
+	err := rootCmd.Execute()
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, errNotInitialized):
+		// The guidance banner was already printed; cobra would repeat it as a
+		// raw error line.
+		return 1
+	case errors.Is(err, errSilent):
+		// The user dismissed an interactive prompt. Nothing went wrong, and
+		// nothing should be printed.
+		return 1
+	default:
 		logger.Error("command execution failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 }
 
 func init() {
-	cobra.OnInitialize(initConfig)
-
+	rootCmd.SilenceErrors = true
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/wut/config.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "enable debug mode")
 }
@@ -288,11 +317,6 @@ func SetVersionInfo() {
 	rootCmd.Version = Version
 }
 
-// initConfig reads in config file and ENV variables if set.
-func initConfig() {
-	// Configuration will be loaded in initialize()
-}
-
 // initialize performs initialization before command execution
 func initialize(ctx context.Context) error {
 	didInitialize = false
@@ -327,13 +351,6 @@ func initialize(ctx context.Context) error {
 		log.Error("failed to create directories", "error", err)
 		return fmt.Errorf("failed to create directories: %w", err)
 	}
-
-	// Initialize metrics
-	metrics.Initialize(Version, Commit)
-
-	// Initialize health checker
-	healthChecker := health.NewChecker(Version)
-	healthChecker.RegisterDefaultChecks()
 
 	// Log startup information
 	log.Info("initialization complete",

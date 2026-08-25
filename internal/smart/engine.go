@@ -124,84 +124,34 @@ func (e *Engine) Suggest(ctx context.Context, query string, contextData *appctx.
 		return e.limitSuggestions(cached, limit), nil
 	}
 
-	// Collect suggestions from all sources concurrently
-	suggestionChan := make(chan []Suggestion, 5)
+	// Every source runs concurrently and reports through one channel. Naming
+	// each source keeps a panic traceable to the source that raised it.
+	sources := []suggestionSource{
+		{"history", func() []Suggestion { return e.getHistorySuggestions(ctx, query, limit) }},
+		{"context", func() []Suggestion { return e.getContextSuggestions(contextData, query) }},
+		{"workflow", func() []Suggestion { return e.getWorkflowSuggestions(contextData, query) }},
+		{"fuzzy", func() []Suggestion { return e.getFuzzySuggestions(query, limit) }},
+		{"catalog", func() []Suggestion { return e.getCatalogSuggestions(ctx, query, limit) }},
+	}
+
+	suggestionChan := make(chan []Suggestion, len(sources))
 	var wg sync.WaitGroup
 
-	// 1. History-based suggestions
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr, "WUT smart engine history: recovered panic: %v\n%s", r, debug.Stack())
+	for _, source := range sources {
+		wg.Add(1)
+		go func(src suggestionSource) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(os.Stderr, "WUT smart engine %s: recovered panic: %v\n%s", src.name, r, debug.Stack())
+				}
+			}()
+			select {
+			case suggestionChan <- src.collect():
+			case <-ctx.Done():
 			}
-		}()
-		select {
-		case suggestionChan <- e.getHistorySuggestions(ctx, query, limit):
-		case <-ctx.Done():
-		}
-	}()
-
-	// 2. Context-specific suggestions
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr, "WUT smart engine context: recovered panic: %v\n%s", r, debug.Stack())
-			}
-		}()
-		select {
-		case suggestionChan <- e.getContextSuggestions(contextData, query):
-		case <-ctx.Done():
-		}
-	}()
-
-	// 3. Common workflow suggestions
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr, "WUT smart engine workflow: recovered panic: %v\n%s", r, debug.Stack())
-			}
-		}()
-		select {
-		case suggestionChan <- e.getWorkflowSuggestions(contextData, query):
-		case <-ctx.Done():
-		}
-	}()
-
-	// 4. Fuzzy matched suggestions
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr, "WUT smart engine fuzzy: recovered panic: %v\n%s", r, debug.Stack())
-			}
-		}()
-		select {
-		case suggestionChan <- e.getFuzzySuggestions(query, limit):
-		case <-ctx.Done():
-		}
-	}()
-
-	// 5. Command catalog / TLDR suggestions
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				fmt.Fprintf(os.Stderr, "WUT smart engine catalog: recovered panic: %v\n%s", r, debug.Stack())
-			}
-		}()
-		select {
-		case suggestionChan <- e.getCatalogSuggestions(ctx, query, limit):
-		case <-ctx.Done():
-		}
-	}()
+		}(source)
+	}
 
 	// Close channel when done
 	go func() {
@@ -211,12 +161,14 @@ func (e *Engine) Suggest(ctx context.Context, query string, contextData *appctx.
 
 	// Collect and deduplicate with context check
 	suggestionMap := make(map[string]Suggestion)
-	for {
+	complete := false
+	for !complete {
 		select {
 		case suggestions, ok := <-suggestionChan:
 			if !ok {
-				// Channel closed, all workers done
-				goto done
+				// Channel closed, all sources reported
+				complete = true
+				break
 			}
 			for _, s := range suggestions {
 				if existing, ok := suggestionMap[s.Command]; ok {
@@ -227,10 +179,9 @@ func (e *Engine) Suggest(ctx context.Context, query string, contextData *appctx.
 			}
 		case <-ctx.Done():
 			// Context cancelled/timed out, return what we have
-			goto done
+			return e.finishPartial(suggestionMap, query, contextData, limit), nil
 		}
 	}
-done:
 
 	// Convert to slice and sort
 	results := make([]Suggestion, 0, len(suggestionMap))
@@ -241,10 +192,30 @@ done:
 	// Score and sort
 	results = e.scoreAndSort(results, query, contextData)
 
-	// Cache results
+	// Only a complete result set is cached. Caching a set truncated by a
+	// cancelled context would serve those degraded results for the next 30s,
+	// long after the condition that caused the truncation had passed.
 	e.cache.Set(cacheKey, results, 30*time.Second)
 
 	return e.limitSuggestions(results, limit), nil
+}
+
+// suggestionSource pairs a source name with its collector so the fan-out loop
+// stays one block instead of one copy-pasted goroutine per source.
+type suggestionSource struct {
+	name    string
+	collect func() []Suggestion
+}
+
+// finishPartial sorts and limits whatever was collected before the context
+// ended. The result is returned but deliberately not cached.
+func (e *Engine) finishPartial(collected map[string]Suggestion, query string, contextData *appctx.Context, limit int) []Suggestion {
+	results := make([]Suggestion, 0, len(collected))
+	for _, s := range collected {
+		results = append(results, s)
+	}
+	results = e.scoreAndSort(results, query, contextData)
+	return e.limitSuggestions(results, limit)
 }
 
 // getHistorySuggestions gets suggestions from command history sequentially

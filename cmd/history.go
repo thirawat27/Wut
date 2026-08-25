@@ -18,7 +18,6 @@ import (
 	"wut/internal/config"
 	"wut/internal/db"
 	"wut/internal/logger"
-	"wut/internal/metrics"
 	"wut/internal/shell"
 )
 
@@ -393,7 +392,6 @@ func showHistory(ctx context.Context, storage *db.Storage) error {
 		return fmt.Errorf("error running history UI: %w", err)
 	}
 
-	metrics.RecordHistoryView()
 	return nil
 }
 
@@ -464,7 +462,6 @@ func showHistoryStats(ctx context.Context, storage *db.Storage) error {
 		fmt.Println()
 	}
 
-	metrics.RecordHistoryView()
 	return nil
 }
 

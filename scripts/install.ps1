@@ -53,7 +53,6 @@ param(
 
 # ── Configuration ────────────────────────────────────────────────────────────
 $script:Repo      = "thirawat27/wut"
-$script:Installer = "wut-setup.exe"
 $ErrorActionPreference = "Stop"
 
 # ── ANSI Colors ──────────────────────────────────────────────────────────────
@@ -111,7 +110,7 @@ Examples:
 }
 
 # ── Resolve download URL via GitHub API ──────────────────────────────────────
-function Get-SetupUrl {
+function Get-ReleaseAsset {
     param([string]$Version)
 
     $headers = @{ "User-Agent" = "WUT-Installer" }
@@ -120,7 +119,7 @@ function Get-SetupUrl {
         $apiUrl = "https://api.github.com/repos/$($script:Repo)/releases/latest"
     }
     else {
-        # Strip leading 'v' for tag lookup – the API accepts both but normalise
+        # Strip leading 'v' for tag lookup - the API accepts both but normalise
         $tag    = if ($Version -like "v*") { $Version } else { "v$Version" }
         $apiUrl = "https://api.github.com/repos/$($script:Repo)/releases/tags/$tag"
     }
@@ -136,15 +135,91 @@ function Get-SetupUrl {
 
     Write-Info "Found release: $($release.tag_name)"
 
-    # Find the asset named wut-setup.exe
-    $asset = $release.assets | Where-Object { $_.name -eq $script:Installer } | Select-Object -First 1
+    # Releases publish a portable archive, not a wut-setup.exe. This script used
+    # to look for the setup executable by exact name, so it failed on every
+    # release that has ever been published.
+    $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
+        "AMD64" { "x86_64" }
+        "ARM64" { "arm64" }
+        "x86"   { "i386" }
+        default { "x86_64" }
+    }
+
+    $bareVersion = $release.tag_name -replace '^v', ''
+    $candidates  = @(
+        "wut_${bareVersion}_Windows_${arch}.zip",
+        "wut_$($release.tag_name)_Windows_${arch}.zip"
+    )
+
+    $asset = $null
+    foreach ($name in $candidates) {
+        $asset = $release.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+        if ($asset) { break }
+    }
+    if (-not $asset) {
+        # Fall back to a pattern match so a template change degrades into a
+        # clear error rather than a silent miss.
+        $asset = $release.assets |
+            Where-Object { $_.name -match "^wut_.*_Windows_$([regex]::Escape($arch))\.zip$" } |
+            Select-Object -First 1
+    }
 
     if (-not $asset) {
         $names = ($release.assets | ForEach-Object { $_.name }) -join ", "
-        throw "Asset '$($script:Installer)' not found in release $($release.tag_name). Available: $names"
+        throw "No Windows/$arch archive found in release $($release.tag_name). Available: $names"
     }
 
-    return $asset.browser_download_url
+    $checksums = $release.assets | Where-Object { $_.name -eq "checksums.txt" } | Select-Object -First 1
+
+    return [pscustomobject]@{
+        Name         = $asset.name
+        Url          = $asset.browser_download_url
+        ChecksumsUrl = if ($checksums) { $checksums.browser_download_url } else { $null }
+        Tag          = $release.tag_name
+    }
+}
+
+# ── Verify the download against the release checksums ────────────────────────
+# Without this the installer runs whatever bytes it received, with no way to
+# notice tampering or a truncated transfer.
+function Test-Checksum {
+    param(
+        [string]$ArchivePath,
+        [string]$AssetName,
+        [string]$ChecksumsUrl,
+        [string]$TempDir
+    )
+
+    if ($env:WUT_SKIP_CHECKSUM -eq "1") {
+        Write-Warn "Checksum verification skipped (WUT_SKIP_CHECKSUM=1)"
+        return
+    }
+
+    if (-not $ChecksumsUrl) {
+        throw "This release publishes no checksums.txt, so the download cannot be verified. Set WUT_SKIP_CHECKSUM=1 if you accept that risk."
+    }
+
+    $checksumsPath = Join-Path $TempDir "checksums.txt"
+    Invoke-Download -Url $ChecksumsUrl -OutFile $checksumsPath
+
+    $expected = $null
+    foreach ($line in Get-Content $checksumsPath) {
+        $parts = $line -split '\s+', 2
+        if ($parts.Count -eq 2 -and $parts[1].TrimStart('*') -eq $AssetName) {
+            $expected = $parts[0]
+            break
+        }
+    }
+    if (-not $expected) {
+        throw "No checksum entry for $AssetName in checksums.txt"
+    }
+
+    $actual = (Get-FileHash -Path $ArchivePath -Algorithm SHA256).Hash
+    if ($actual -ne $expected.ToUpperInvariant() -and $actual.ToLowerInvariant() -ne $expected.ToLowerInvariant()) {
+        throw "Checksum mismatch for $AssetName.`n  expected: $expected`n  actual:   $actual`nRefusing to install."
+    }
+
+    Write-Success "Checksum verified (sha256)"
 }
 
 # ── Download file with progress ───────────────────────────────────────────────
@@ -163,7 +238,7 @@ function Invoke-Download {
     $progressId = 1
     Register-ObjectEvent -InputObject $wc -EventName DownloadProgressChanged -SourceIdentifier "WutDlProgress" -Action {
         $pct = $EventArgs.ProgressPercentage
-        Write-Progress -Activity "Downloading wut-setup.exe" -Status "$pct% complete" -PercentComplete $pct -Id $using:progressId
+        Write-Progress -Activity "Downloading release archive" -Status "$pct% complete" -PercentComplete $pct -Id $using:progressId
     } | Out-Null
 
     try {
@@ -174,42 +249,91 @@ function Invoke-Download {
     }
     finally {
         Unregister-Event -SourceIdentifier "WutDlProgress" -ErrorAction SilentlyContinue
-        Write-Progress -Activity "Downloading wut-setup.exe" -Completed -Id $progressId
+        Write-Progress -Activity "Downloading release archive" -Completed -Id $progressId
     }
 
     Write-Success "Downloaded: $OutFile"
 }
 
-# ── Run the setup installer ───────────────────────────────────────────────────
-function Start-Setup {
+# ── Install from the portable archive ────────────────────────────────────────
+function Install-FromArchive {
     param(
-        [string]$InstallerPath,
-        [bool]$IsUninstall
+        [string]$ArchivePath,
+        [string]$TempDir
     )
 
-    # NSIS / Inno Setup typical silent flags; adjust if your installer differs
-    if ($IsUninstall) {
-        $installerArgs = @("/uninstall", "/S")
-        Write-Info "Running uninstaller silently..."
+    $extractDir = Join-Path $TempDir "extract"
+    New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+
+    Write-Info "Extracting archive..."
+    Expand-Archive -Path $ArchivePath -DestinationPath $extractDir -Force
+
+    $binary = Get-ChildItem -Path $extractDir -Filter "wut.exe" -Recurse -File | Select-Object -First 1
+    if (-not $binary) {
+        throw "Could not find wut.exe inside the downloaded archive"
+    }
+
+    $installDir = Join-Path $env:LOCALAPPDATA "Programs\wut"
+    New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+
+    $target = Join-Path $installDir "wut.exe"
+    Copy-Item -Path $binary.FullName -Destination $target -Force
+    Write-Success "Installed to $target"
+
+    Add-ToUserPath -Directory $installDir
+    return $target
+}
+
+# ── Ensure the install directory is on the user PATH ─────────────────────────
+function Add-ToUserPath {
+    param([string]$Directory)
+
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $entries  = @()
+    if ($userPath) {
+        $entries = $userPath -split ';' | Where-Object { $_ }
+    }
+
+    if ($entries -contains $Directory) {
+        return
+    }
+
+    $updated = (($entries + $Directory) -join ';')
+    [Environment]::SetEnvironmentVariable("Path", $updated, "User")
+    # Make wut usable in this session too, not only after a restart.
+    $env:Path = "$env:Path;$Directory"
+    Write-Info "Added $Directory to your user PATH"
+}
+
+# ── Uninstall ────────────────────────────────────────────────────────────────
+function Uninstall-Wut {
+    $installDir = Join-Path $env:LOCALAPPDATA "Programs\wut"
+    $target     = Join-Path $installDir "wut.exe"
+
+    if (Test-Path $target) {
+        Remove-Item -Path $target -Force
+        Write-Success "Removed $target"
     }
     else {
-        $installerArgs = @("/S")          # Silent install
-        Write-Info "Running installer silently..."
+        Write-Warn "No installation found at $target"
     }
 
-    $proc = Start-Process -FilePath $InstallerPath -ArgumentList $installerArgs -Wait -PassThru
-
-    if ($proc.ExitCode -ne 0) {
-        throw "Installer exited with code $($proc.ExitCode)"
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($userPath) {
+        $entries = $userPath -split ';' | Where-Object { $_ -and $_ -ne $installDir }
+        [Environment]::SetEnvironmentVariable("Path", ($entries -join ';'), "User")
     }
 
-    Write-Success "Setup completed successfully (exit code 0)"
+    if ((Test-Path $installDir) -and -not (Get-ChildItem -Path $installDir -Force)) {
+        Remove-Item -Path $installDir -Force
+    }
 }
 
 function Find-WutBinary {
     $candidates = @(
         (Get-Command wut -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
         (Join-Path $env:ProgramFiles "WUT\wut.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\wut\wut.exe"),
         (Join-Path $env:LOCALAPPDATA "WUT\wut.exe"),
         (Join-Path ${env:ProgramFiles(x86)} "WUT\wut.exe")
     ) | Where-Object { $_ }
@@ -275,27 +399,29 @@ function Main {
         }
     }
 
+    $tempDir = $null
     try {
-        # 1. Resolve the download URL
-        $downloadUrl = Get-SetupUrl -Version $Version
-
-        # 2. Download into temp dir
-        $tempDir   = Join-Path $env:TEMP "wut-install-$([Guid]::NewGuid())"
-        New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-
-        $outFile = Join-Path $tempDir $script:Installer
-
-        try {
-            Invoke-Download -Url $downloadUrl -OutFile $outFile
+        if ($Uninstall) {
+            Uninstall-Wut
         }
-        catch {
-            throw $_
-        }
+        else {
+            # 1. Resolve the release archive for this platform
+            $asset = Get-ReleaseAsset -Version $Version
 
-        # 3. Run installer
-        Start-Setup -InstallerPath $outFile -IsUninstall $Uninstall.IsPresent
+            # 2. Download into a temp dir
+            $tempDir = Join-Path $env:TEMP "wut-install-$([Guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
-        if (-not $Uninstall) {
+            $outFile = Join-Path $tempDir $asset.Name
+            Invoke-Download -Url $asset.Url -OutFile $outFile
+
+            # 3. Verify before doing anything with the bytes we received
+            Test-Checksum -ArchivePath $outFile -AssetName $asset.Name `
+                          -ChecksumsUrl $asset.ChecksumsUrl -TempDir $tempDir
+
+            # 4. Extract and install
+            Install-FromArchive -ArchivePath $outFile -TempDir $tempDir | Out-Null
+
             Invoke-WutInit
         }
 

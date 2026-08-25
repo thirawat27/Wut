@@ -220,8 +220,14 @@ func parseLevel(level string) Level {
 	}
 }
 
-// rotatingWriter handles log rotation
+// rotatingWriter handles log rotation.
+//
+// The global logger is written from several goroutines at once (the signal
+// handler, the sync worker pool, and the suggestion engine's parallel sources),
+// so every access to file/size is guarded. Without the mutex a Write racing a
+// rotate could write to an already-closed handle.
 type rotatingWriter struct {
+	mu         sync.Mutex
 	filename   string
 	maxSize    int
 	maxBackups int
@@ -264,6 +270,9 @@ func (rw *rotatingWriter) open() error {
 
 // Write implements io.Writer
 func (rw *rotatingWriter) Write(p []byte) (n int, err error) {
+	rw.mu.Lock()
+	defer rw.mu.Unlock()
+
 	// Check if rotation is needed
 	if rw.size+int64(len(p)) > int64(rw.maxSize*1024*1024) {
 		if err := rw.rotate(); err != nil {
@@ -276,7 +285,7 @@ func (rw *rotatingWriter) Write(p []byte) (n int, err error) {
 	return n, err
 }
 
-// rotate rotates the log file
+// rotate rotates the log file. The caller must hold rw.mu.
 func (rw *rotatingWriter) rotate() error {
 	if rw.file != nil {
 		rw.file.Close()
@@ -296,11 +305,18 @@ func (rw *rotatingWriter) rotate() error {
 	// Rename current file
 	_ = os.Rename(rw.filename, rw.filename+".1")
 
+	// The rotated-away file is gone, so the byte counter restarts. Without this
+	// the counter keeps growing and every subsequent Write triggers a rotate.
+	rw.size = 0
+
 	return rw.open()
 }
 
 // Close closes the file
 func (rw *rotatingWriter) Close() error {
+	rw.mu.Lock()
+	defer rw.mu.Unlock()
+
 	if rw.file != nil {
 		return rw.file.Close()
 	}

@@ -315,15 +315,25 @@ func GetReloadCommand(shellName, configFile string) string {
 	}
 }
 
-// generateBashZshCode creates a minimal, non-invasive integration.
-// It provides keybindings and helper commands only. It does NOT replace
-// command_not_found handlers or hook into the prompt, so it cannot break
+// / generateBashZshCode creates a minimal, non-invasive integration.
+//
+// It defines key bindings and helper commands only. It does not replace
+// command_not_found handlers and does not hook the prompt, so it cannot break
 // other shell extensions.
+//
+// `oops` asks WUT what the previous command should have been, shows the
+// candidates, and runs the one the user accepts — in this shell, so `cd` and
+// exported variables take effect as if the user had typed it. WUT itself never
+// runs the failed command; it only ever prints a suggestion, and the shell
+// decides what to do with it.
 func generateBashZshCode() string {
 	return `# WUT Key Bindings - Quick Access
 # This block is managed by WUT. Remove it with: wut install --uninstall
+#
+#   oops            fix the previous command and run it after you confirm
+#   oops <command>  fix a specific command
+#   cmd 2>&1 | oops feed WUT the error output for a more precise fix
 
-# Only define helpers if wut is available.
 if command -v wut >/dev/null 2>&1; then
     __wut_tui() {
         wut suggest
@@ -336,23 +346,52 @@ if command -v wut >/dev/null 2>&1; then
         wut suggest "$cmd"
     }
 
+    # __wut_last_command returns the previous command line, skipping WUT's own
+    # helpers so "oops" twice in a row still targets the real command.
+    __wut_last_command() {
+        local cmd
+        cmd="$(fc -ln -1 2>/dev/null | tail -n 1)"
+        case "$cmd" in
+            oops*|again*|wut\ *)
+                cmd="$(fc -ln -2 2>/dev/null | head -n 1)"
+                ;;
+        esac
+        printf '%s' "$cmd" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
+    }
+
     oops() {
-        local cmd=""
+        local cmd fixed
         if [[ $# -gt 0 ]]; then
             cmd="$*"
         else
-            cmd="$(fc -ln -1 2>/dev/null | tail -n 1)"
-            case "$cmd" in
-                oops*|again*|wut\ *)
-                    cmd="$(fc -ln -2 2>/dev/null | head -n 1)"
-                    ;;
-            esac
+            cmd="$(__wut_last_command)"
         fi
-        cmd="$(printf '%s' "$cmd" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+
         if [[ -z "$cmd" || "$cmd" == wut\ * || "$cmd" == oops* || "$cmd" == again* ]]; then
+            printf 'oops: no previous command to fix\n' >&2
             return 1
         fi
-        wut fix "$cmd"
+
+        # --shell prints only the accepted command on stdout; the picker draws
+        # on the terminal. Piped-in output (cmd 2>&1 | oops) is forwarded so the
+        # output-aware rules can run.
+        if [[ ! -t 0 ]]; then
+            fixed="$(wut fix --shell --stderr - "$cmd")"
+        else
+            fixed="$(wut fix --shell "$cmd")"
+        fi
+
+        [[ -z "$fixed" ]] && return 1
+
+        # Record the correction so it is reachable with the up arrow, then run
+        # it in this shell so cd/export behave normally.
+        if [[ -n "$ZSH_VERSION" ]]; then
+            print -s -- "$fixed"
+        else
+            history -s -- "$fixed"
+        fi
+
+        eval "$fixed"
     }
 
     again() {
@@ -381,10 +420,13 @@ if command -v wut >/dev/null 2>&1; then
 fi
 `
 }
-
 func generateFishCode() string {
 	return `# WUT Key Bindings - Quick Access
 # This block is managed by WUT. Remove it with: wut install --uninstall
+#
+#   oops            fix the previous command and run it after you confirm
+#   oops <command>  fix a specific command
+#   cmd 2>&1 | oops feed WUT the error output for a more precise fix
 
 if command -q wut
     function __wut_tui
@@ -408,14 +450,29 @@ if command -q wut
         end
 
         set cmd (string trim -- $cmd)
-        if test -z "$cmd"
-            return 1
-        end
-        if string match -qr '^(oops|again|wut)\b' -- $cmd
+        if test -z "$cmd"; or string match -qr '^(oops|again|wut)\b' -- $cmd
+            echo "oops: no previous command to fix" >&2
             return 1
         end
 
-        wut fix "$cmd"
+        # --shell prints only the accepted command on stdout; the picker draws
+        # on the terminal. Piped-in output (cmd 2>&1 | oops) is forwarded so the
+        # output-aware rules can run. wut never re-executes $cmd itself.
+        set -l fixed
+        if isatty stdin
+            set fixed (wut fix --shell "$cmd")
+        else
+            set fixed (wut fix --shell --stderr - "$cmd")
+        end
+
+        if test -z "$fixed"
+            return 1
+        end
+
+        # Make the correction reachable with the up arrow, then run it here so
+        # cd and set -x behave normally.
+        history append -- "$fixed"
+        eval "$fixed"
     end
 
     function again
@@ -427,10 +484,12 @@ if command -q wut
 end
 `
 }
-
 func generatePowerShellCode(sourceShell string) string {
 	return fmt.Sprintf(`# WUT Key Bindings - Quick Access
 # This block is managed by WUT. Remove it with: wut install --uninstall
+#
+#   oops            fix the previous command and run it after you confirm
+#   oops <command>  fix a specific command
 
 if (-not (Get-Command wut -ErrorAction SilentlyContinue)) {
     return
@@ -460,20 +519,32 @@ function Invoke-WUTOops {
     if (-not $target) {
         $history = @(Get-History -Count 2 -ErrorAction SilentlyContinue)
         if ($history.Count -gt 0) {
-            $target = $history[0].CommandLine
+            $target = $history[-1].CommandLine
             if (($target -like 'oops*' -or $target -like 'again*' -or $target -like 'wut *') -and $history.Count -gt 1) {
-                $target = $history[1].CommandLine
+                $target = $history[-2].CommandLine
             }
         }
     }
 
     if (-not $target -or $target -like 'oops*' -or $target -like 'again*' -or $target -like 'wut *') {
+        Write-Error 'oops: no previous command to fix'
         return
     }
 
+    # --shell prints only the accepted command on stdout; the picker draws on
+    # the terminal. wut never re-executes $target to see how it failed.
     $env:WUT_SOURCE_SHELL = '%s'
-    wut fix "$target"
-    Remove-Item Env:\WUT_SOURCE_SHELL -ErrorAction SilentlyContinue
+    try {
+        $fixed = (wut fix --shell "$target" | Out-String).Trim()
+    }
+    finally {
+        Remove-Item Env:\WUT_SOURCE_SHELL -ErrorAction SilentlyContinue
+    }
+
+    if (-not $fixed) { return }
+
+    # Run it in this session so Set-Location and $env: changes persist.
+    Invoke-Expression $fixed
 }
 
 Set-Alias oops Invoke-WUTOops -ErrorAction SilentlyContinue
@@ -483,7 +554,6 @@ Set-PSReadLineKeyHandler -Chord 'Ctrl+Space' -ScriptBlock { Invoke-WUT-TUI } -Er
 Set-PSReadLineKeyHandler -Chord 'Ctrl+g' -ScriptBlock { Invoke-WUT-WithCurrent } -ErrorAction SilentlyContinue
 `, sourceShell)
 }
-
 func generateNushellCode() string {
 	return `# WUT integration for Nushell
 # This block is managed by WUT. Remove it with: wut install --uninstall

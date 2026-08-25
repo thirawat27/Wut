@@ -15,8 +15,23 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
 	"wut/internal/concurrency"
+	"wut/internal/config"
 	"wut/internal/logger"
+)
+
+const (
+	// archiveDownloadTimeout is the total budget for fetching the full TLDR
+	// archive. Unlike an http.Client.Timeout it is applied as a context
+	// deadline, so a slow-but-progressing transfer is allowed to finish.
+	archiveDownloadTimeout = 10 * time.Minute
+	// maxArchiveBytes caps the archive written to disk so a hijacked or
+	// misbehaving asset cannot fill the user's filesystem.
+	maxArchiveBytes = 256 << 20 // 256 MiB
+	// maxArchiveEntryBytes caps a single decompressed entry, bounding zip-bomb
+	// expansion. TLDR pages are a few KB each.
+	maxArchiveEntryBytes = 1 << 20 // 1 MiB
 )
 
 // SyncManager manages syncing TLDR pages to local storage
@@ -25,6 +40,9 @@ type SyncManager struct {
 	storage    *Storage
 	log        *logger.Logger
 	workerPool *concurrency.Pool
+	// archiveClient is used only for bulk archive downloads. It has no
+	// whole-exchange timeout; see NewArchiveHTTPClient.
+	archiveClient *http.Client
 }
 
 // SyncOptions contains options for syncing
@@ -54,10 +72,11 @@ func NewSyncManager(storage *Storage) *SyncManager {
 	pool.Start()
 
 	sm := &SyncManager{
-		client:     NewClient(),
-		storage:    storage,
-		log:        logger.With("db-sync"),
-		workerPool: pool,
+		client:        NewClient(),
+		storage:       storage,
+		log:           logger.With("db-sync"),
+		workerPool:    pool,
+		archiveClient: NewArchiveHTTPClient(),
 	}
 	return sm
 }
@@ -165,10 +184,18 @@ func (s *batchPageSaver) Result(start time.Time) *SyncResult {
 	}
 }
 
+// localSyncRoots returns the directories that may hold an extracted tldr-pages
+// checkout, resolved against WUT's own data directory.
+//
+// These are deliberately NOT relative to the process working directory. A
+// relative lookup made `wut db sync` produce a different database depending on
+// where it was invoked, and let any directory containing a planted
+// `tldr-main/pages` tree seed the command database with untrusted content.
 func localSyncRoots() []string {
+	base := config.GetDataDir()
 	return []string{
-		"tldr-main",
-		filepath.Join("tldr-main", "tldr-main"),
+		filepath.Join(base, "tldr-main"),
+		filepath.Join(base, "tldr-main", "tldr-main"),
 	}
 }
 
@@ -303,12 +330,23 @@ func (sm *SyncManager) SyncFromZip(ctx context.Context, zipURL string) (*SyncRes
 	start := time.Now()
 	sm.log.Info("downloading full tldr archive", "url", zipURL)
 
+	// A multi-megabyte transfer needs its own budget. sm.client is tuned for
+	// single 4KB page fetches and would abort this download mid-stream.
+	ctx, cancel := context.WithTimeout(ctx, archiveDownloadTimeout)
+	defer cancel()
+
 	req, err := http.NewRequestWithContext(ctx, "GET", zipURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request failed: %w", err)
 	}
+	req.Header.Set("User-Agent", userAgent)
 
-	resp, err := sm.client.httpClient.Do(req)
+	client := sm.archiveClient
+	if client == nil {
+		client = NewArchiveHTTPClient()
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("download failed: %w", err)
 	}
@@ -326,9 +364,13 @@ func (sm *SyncManager) SyncFromZip(ctx context.Context, zipURL string) (*SyncRes
 	defer os.Remove(tmpFile.Name())
 	defer tmpFile.Close()
 
-	size, err := io.Copy(tmpFile, resp.Body)
+	// Bound the write so a hijacked or misbehaving asset cannot fill the disk.
+	size, err := io.Copy(tmpFile, io.LimitReader(resp.Body, maxArchiveBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to download zip stream: %w", err)
+	}
+	if size > maxArchiveBytes {
+		return nil, fmt.Errorf("archive exceeds the %d MiB limit; refusing to import", maxArchiveBytes>>20)
 	}
 
 	sm.log.Info("archive downloaded via stream", "size", size)
@@ -373,7 +415,8 @@ func (sm *SyncManager) SyncFromZip(ctx context.Context, zipURL string) (*SyncRes
 			continue
 		}
 
-		contentBytes, err := io.ReadAll(rc)
+		// Bound each entry so a zip bomb cannot expand into memory.
+		contentBytes, err := io.ReadAll(io.LimitReader(rc, maxArchiveEntryBytes))
 		rc.Close()
 
 		if err != nil {

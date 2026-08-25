@@ -226,7 +226,29 @@ wut install --yes
 After installation, these keyboard shortcuts will be available:
 - **Ctrl+Space**: Open WUT interactive mode
 - **Ctrl+G**: Open WUT with the current command line pre-filled
-- **oops** / **again**: Show WUT's correction for the last command
+- **oops** / **again**: Fix the last command and run it once you confirm
+
+```console
+$ git push
+fatal: The current branch feature/login has no upstream branch.
+
+$ oops
+
+  git push
+❯ git push --set-upstream origin feature/login
+
+  enter run · esc cancel
+```
+
+Press Enter and it runs in your shell — so `cd`, `export`, and shell functions
+behave exactly as if you had typed it. Press Esc and nothing happens. With more
+than one candidate, ↑/↓ cycles between them.
+
+> **WUT works out that fix without running `git push`.** It asks git a
+> read-only question instead (`git rev-parse --abbrev-ref @{u}`). Tools that
+> re-run your failed command to read its error output push again, delete again,
+> deploy again. WUT never re-runs the command it is correcting — see
+> [How corrections are derived](#how-corrections-are-derived).
 
 To remove shell integration and restore the latest backup:
 ```bash
@@ -345,6 +367,33 @@ wut fix "rm -rf /"
 
 # List common typos that WUT can fix
 wut fix --list
+
+# Give WUT the error output for a more precise fix
+git push 2>&1 | wut fix --stderr - "git push"
+```
+
+### How corrections are derived
+
+**`wut fix` never executes the command you give it.** It reaches a fix from
+three sources, in this order:
+
+| Source | Cost | Examples |
+|---|---|---|
+| The command string | free | `gti comit` → `git commit`, `cd..` → `cd ..`, unknown flag clusters |
+| **Read-only facts WUT gathers itself** | one file read or one fixed probe | `npm run biuld` → reads `package.json`; `make instal` → reads the `Makefile`; `cd intenral` → lists the directory; `git push` → asks git whether the branch has an upstream |
+| The failed command's output | free, when you supply it | `git: did you mean…`, `Missing script:`, `permission denied` → `sudo`, `address already in use` |
+
+The middle row is the difference. Answering "does this branch have an upstream?"
+with `git rev-parse` costs nothing and changes nothing. Answering it by running
+`git push` again pushes. WUT only ever runs commands from a fixed allowlist it
+chooses — currently four `git rev-parse`/`remote`/`branch` invocations — and
+never anything derived from what you typed.
+
+For the third row, hand WUT the output you already saw:
+
+```bash
+some-command 2>&1 | oops          # the shell integration forwards it
+wut fix --stderr build.log "make"  # or point at a file
 ```
 
 **How It Works:**
@@ -353,6 +402,9 @@ WUT tokenizes the full command and runs each token through:
 2. Levenshtein distance ≤ 2 fuzzy matching across all tokens
 3. History-based full-sentence comparison
 4. Confusable pattern detection (missing `git` prefix, etc.)
+5. Project-aware rules driven by read-only facts (package.json scripts,
+   Makefile targets, directory contents, git branch state)
+6. Error-output rules, when you supply the failed command's output
 
 **Common Typos Detected:**
 - `gti comit` → `git commit` (multi-token fix)

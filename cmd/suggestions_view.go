@@ -12,7 +12,6 @@ import (
 	"github.com/muesli/reflow/truncate"
 
 	appctx "wut/internal/context"
-	"wut/internal/metrics"
 	"wut/internal/smart"
 )
 
@@ -41,7 +40,6 @@ func showSmartSuggestions(query string, ctx *appctx.Context, suggestions []smart
 		return fmt.Errorf("error running smart UI: %w", err)
 	}
 
-	metrics.RecordHistoryView()
 	return nil
 }
 

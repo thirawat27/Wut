@@ -23,7 +23,6 @@ builds:
       - -X main.Version={{.Version}}
       - -X main.BuildTime={{.Date}}
       - -X main.Commit={{.Commit}}
-      - -X main.BuildHost={{.Env.HOSTNAME}}
     goos:
       - linux
       - darwin
@@ -79,11 +78,10 @@ archives:
       {{- if .Arm }}v{{ .Arm }}{{ end }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     files:
       - LICENSE
       - README.md
-      - completions/*
 
 # Checksum configuration
 checksum:
@@ -225,50 +223,29 @@ chocolateys:
     dependencies:
       - id: git
     api_key: "{{ .Env.CHOCOLATEY_API_KEY }}"
-    source: "{{ .Dist }}"
     skip_publish: false
     goamd64: v1
 
-# Docker Images Configuration
-dockers:
-  # AMD64 images
-  - image_templates:
-      - "ghcr.io/thirawat27/wut:{{ .Version }}-amd64"
-      - "ghcr.io/thirawat27/wut:latest-amd64"
+# Docker images (dockers_v2 replaces the deprecated dockers/docker_manifests
+# pair and builds the multi-arch manifest in one step).
+dockers_v2:
+  - id: wut
+    images:
+      - "ghcr.io/thirawat27/wut"
+    tags:
+      - "{{ .Version }}"
+      - "latest"
     dockerfile: Dockerfile
-    use: buildx
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.created={{ .Date }}"
-      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-    goos: linux
-    goarch: amd64
-  # ARM64 images
-  - image_templates:
-      - "ghcr.io/thirawat27/wut:{{ .Version }}-arm64"
-      - "ghcr.io/thirawat27/wut:latest-arm64"
-    dockerfile: Dockerfile
-    use: buildx
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.created={{ .Date }}"
-      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
-      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
-      - "--label=org.opencontainers.image.version={{ .Version }}"
-    goos: linux
-    goarch: arm64
-
-docker_manifests:
-  - name_template: "ghcr.io/thirawat27/wut:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/thirawat27/wut:{{ .Version }}-amd64"
-      - "ghcr.io/thirawat27/wut:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/thirawat27/wut:latest"
-    image_templates:
-      - "ghcr.io/thirawat27/wut:latest-amd64"
-      - "ghcr.io/thirawat27/wut:latest-arm64"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.source: "https://github.com/thirawat27/wut"
+      org.opencontainers.image.licenses: "MIT"
 
 # Nix flake (optional)
 # nix:
@@ -301,16 +278,23 @@ docker_manifests:
 #     license: MIT
 #     base: core22
 
-# GPG signing
+# Keyless signing via cosign + GitHub OIDC.
+# Verify a release with:
+#   cosign verify-blob checksums.txt \
+#     --certificate checksums.txt.pem \
+#     --signature checksums.txt.sig \
+#     --certificate-identity-regexp 'https://github.com/thirawat27/wut/.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 signs:
-  - artifacts: checksum
+  - cmd: cosign
+    artifacts: checksum
+    certificate: "${artifact}.pem"
+    output: true
     args:
-      - "--batch"
-      - "--local-user"
-      - "{{ .Env.GPG_FINGERPRINT }}"
-      - "--output"
-      - "${signature}"
-      - "--detach-sign"
+      - "sign-blob"
+      - "--yes"
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
       - "${artifact}"
 
 # Announcing

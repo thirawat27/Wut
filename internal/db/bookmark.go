@@ -66,7 +66,10 @@ func (s *Storage) GetBookmarks(ctx context.Context) ([]Bookmark, error) {
 	var entries []Bookmark
 
 	err := s.db.View(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(bookmarkBucketName))
+		bucket, err := requireBucket(tx, bookmarkBucketName)
+		if err != nil {
+			return err
+		}
 		if bucket == nil {
 			return nil
 		}
@@ -116,7 +119,10 @@ func (s *Storage) DeleteBookmark(ctx context.Context, id string) error {
 	}
 
 	return s.db.Update(func(tx *bbolt.Tx) error {
-		bucket := tx.Bucket([]byte(bookmarkBucketName))
+		bucket, err := requireBucket(tx, bookmarkBucketName)
+		if err != nil {
+			return err
+		}
 		if bucket == nil {
 			return nil
 		}

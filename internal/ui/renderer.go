@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"wut/internal/config"
 	"golang.org/x/term"
+	"wut/internal/config"
 )
 
 // Capabilities represents terminal capabilities

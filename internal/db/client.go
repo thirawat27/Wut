@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,8 +20,17 @@ import (
 
 const (
 	baseRawURL  = "https://raw.githubusercontent.com/tldr-pages/tldr/main"
-	userAgent   = "wut/1.0.1 (command-line assistant; +https://github.com/anomalyco/wut)"
+	userAgent   = "wut/1.0.1 (command-line assistant; +https://github.com/thirawat27/wut)"
 	maxBodySize = 64 * 1024 // 64KB limit for TLDR page content
+
+	// pageRequestTimeout bounds a single page fetch end to end. It is sized for
+	// one small markdown file and is deliberately not reused for bulk transfers.
+	pageRequestTimeout = 5 * time.Second
+	// archiveResponseHeaderTimeout bounds how long the server may take to start
+	// responding to a bulk download. The body transfer itself is bounded by the
+	// caller's context, not by a fixed whole-exchange deadline, because archive
+	// size and link speed vary by orders of magnitude.
+	archiveResponseHeaderTimeout = 30 * time.Second
 	// Platforms available in tldr-pages
 	PlatformCommon  = "common"
 	PlatformLinux   = "linux"
@@ -48,10 +58,15 @@ type Client struct {
 	offlineMode   atomic.Bool // atomic to prevent data races across goroutines
 	autoDetect    bool
 	cacheInMemory bool
-	memoryCache   map[string]*Page
-	cacheMu       sync.RWMutex
-	matcher       *performance.FastMatcher
-	matchCache    *performance.LRUCache[string, []string]
+	// memoryCache is bounded: a long-lived TUI session can walk thousands of
+	// pages, and an unbounded map would hold every raw page body for the life of
+	// the process. byName indexes the same entries so a lookup that only knows
+	// the command name does not have to scan the whole cache.
+	memoryCache map[string]*Page
+	byName      map[string]*Page
+	cacheMu     sync.RWMutex
+	matcher     *performance.FastMatcher
+	matchCache  *performance.LRUCache[string, []string]
 
 	commandsMu        sync.RWMutex
 	availableCommands []string
@@ -126,13 +141,17 @@ func NewClient(opts ...ClientOption) *Client {
 
 	c := &Client{
 		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
+			// Whole-exchange budget for a single ~4KB page. Callers that
+			// transfer more than one page (see NewArchiveHTTPClient) must not
+			// reuse this client.
+			Timeout: pageRequestTimeout,
 		},
 		baseURL:          baseRawURL,
 		language:         lang,
 		autoDetect:       true,
 		cacheInMemory:    true,
 		memoryCache:      make(map[string]*Page),
+		byName:           make(map[string]*Page),
 		matcher:          performance.NewFastMatcher(false, 0.2, 3),
 		matchCache:       performance.NewLRUCache[string, []string](256, 16),
 		onlineCheckTTL:   15 * time.Second,
@@ -145,6 +164,76 @@ func NewClient(opts ...ClientOption) *Client {
 	}
 
 	return c
+}
+
+// maxMemoryCachedPages bounds the in-process page cache. Each entry holds the
+// page's raw markdown, so an unbounded map grows with every page a session
+// visits and is never released.
+const maxMemoryCachedPages = 512
+
+// cacheLookup returns a cached page by its full "lang/platform/name" key.
+func (c *Client) cacheLookup(key string) (*Page, bool) {
+	if !c.cacheInMemory {
+		return nil, false
+	}
+	c.cacheMu.RLock()
+	defer c.cacheMu.RUnlock()
+	page, ok := c.memoryCache[key]
+	return page, ok
+}
+
+// cacheLookupByName returns any cached page for a command, regardless of
+// platform, via the name index. The previous implementation scanned every
+// cached entry on each call while holding the read lock.
+func (c *Client) cacheLookupByName(name string) (*Page, bool) {
+	if !c.cacheInMemory {
+		return nil, false
+	}
+	c.cacheMu.RLock()
+	defer c.cacheMu.RUnlock()
+	page, ok := c.byName[name]
+	return page, ok
+}
+
+// cacheStore records a page in both the primary cache and the name index,
+// evicting arbitrary entries once the cache is full. Exact LRU ordering is not
+// worth the bookkeeping here: the cache exists to avoid repeated decoding
+// within one session, not to guarantee a hit rate.
+func (c *Client) cacheStore(key string, page *Page) {
+	if !c.cacheInMemory || page == nil {
+		return
+	}
+
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+
+	if _, exists := c.memoryCache[key]; !exists {
+		for len(c.memoryCache) >= maxMemoryCachedPages {
+			for evictKey, evicted := range c.memoryCache {
+				delete(c.memoryCache, evictKey)
+				if evicted != nil && c.byName[evicted.Name] == evicted {
+					delete(c.byName, evicted.Name)
+				}
+				break
+			}
+		}
+	}
+
+	c.memoryCache[key] = page
+	c.byName[page.Name] = page
+}
+
+// NewArchiveHTTPClient returns a client for bulk downloads.
+//
+// It intentionally leaves http.Client.Timeout unset: that field covers the whole
+// exchange including the body, so a value sized for a 4KB page aborts a
+// multi-megabyte archive mid-stream. Stalls are caught by the transport's
+// response-header timeout, and the total budget is the caller's context.
+func NewArchiveHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = archiveResponseHeaderTimeout
+
+	return &http.Client{Transport: transport}
 }
 
 // SetHTTPClient sets a custom HTTP client (useful for testing)
@@ -219,25 +308,15 @@ func (c *Client) GetPage(ctx context.Context, command, platform string) (*Page, 
 	cacheKey := fmt.Sprintf("%s/%s/%s", lang, platform, command)
 
 	// Check memory cache first
-	if c.cacheInMemory {
-		c.cacheMu.RLock()
-		if page, ok := c.memoryCache[cacheKey]; ok {
-			c.cacheMu.RUnlock()
-			return page, nil
-		}
-		c.cacheMu.RUnlock()
+	if page, ok := c.cacheLookup(cacheKey); ok {
+		return page, nil
 	}
 
 	// Check local storage second
 	if c.storage != nil {
 		page, err := c.storage.GetPage(command, platform, lang)
 		if err == nil {
-			// Cache in memory
-			if c.cacheInMemory {
-				c.cacheMu.Lock()
-				c.memoryCache[cacheKey] = page
-				c.cacheMu.Unlock()
-			}
+			c.cacheStore(cacheKey, page)
 			return page, nil
 		}
 	}
@@ -254,13 +333,13 @@ func (c *Client) GetPage(ctx context.Context, command, platform string) (*Page, 
 	} else {
 		langDir = "pages." + lang
 	}
-	url := fmt.Sprintf("%s/%s/%s/%s.md", c.baseURL, langDir, platform, command)
+	url := pageURL(c.baseURL, langDir, platform, command)
 	content, err := c.fetch(ctx, url)
 
 	if err != nil && lang != "en" {
 		// Fallback to english if not found
 		if errors.Is(err, errPageNotFound) {
-			fallbackURL := fmt.Sprintf("%s/pages/%s/%s.md", c.baseURL, platform, command)
+			fallbackURL := pageURL(c.baseURL, "pages", platform, command)
 			content, err = c.fetch(ctx, fallbackURL)
 			if err == nil {
 				lang = "en"
@@ -286,12 +365,7 @@ func (c *Client) GetPage(ctx context.Context, command, platform string) (*Page, 
 		_ = c.storage.SavePage(page)
 	}
 
-	// Cache in memory
-	if c.cacheInMemory {
-		c.cacheMu.Lock()
-		c.memoryCache[cacheKey] = page
-		c.cacheMu.Unlock()
-	}
+	c.cacheStore(cacheKey, page)
 	c.rememberAvailableCommand(page.Name)
 
 	return page, nil
@@ -349,16 +423,9 @@ func (c *Client) SearchPages(ctx context.Context, query string) ([]Page, error) 
 // GetPageAnyPlatform tries to get a page from any available platform
 // Auto-detects online/offline and falls back automatically
 func (c *Client) GetPageAnyPlatform(ctx context.Context, command string) (*Page, error) {
-	// Check memory cache first
-	if c.cacheInMemory {
-		c.cacheMu.RLock()
-		for _, page := range c.memoryCache {
-			if page.Name == command {
-				c.cacheMu.RUnlock()
-				return page, nil
-			}
-		}
-		c.cacheMu.RUnlock()
+	// Check memory cache first, by name index rather than a full scan
+	if page, ok := c.cacheLookupByName(command); ok {
+		return page, nil
 	}
 
 	// Check local storage second
@@ -369,12 +436,7 @@ func (c *Client) GetPageAnyPlatform(ctx context.Context, command string) (*Page,
 	if c.storage != nil {
 		page, err := c.storage.GetPageAnyPlatform(command, lang)
 		if err == nil {
-			// Cache in memory
-			if c.cacheInMemory {
-				c.cacheMu.Lock()
-				c.memoryCache[fmt.Sprintf("%s/%s/%s", page.Language, page.Platform, page.Name)] = page
-				c.cacheMu.Unlock()
-			}
+			c.cacheStore(fmt.Sprintf("%s/%s/%s", page.Language, page.Platform, page.Name), page)
 			return page, nil
 		}
 	}
@@ -408,6 +470,19 @@ func (c *Client) GetPageAnyPlatform(ctx context.Context, command string) (*Page,
 	}
 
 	return nil, fmt.Errorf("%w for command: %s", errPageNotFound, command)
+}
+
+// pageURL builds a TLDR page URL with each user-controlled segment escaped.
+//
+// The command name comes from the command line, so interpolating it raw let a
+// name containing "../" or a query string reshape the request path.
+func pageURL(baseURL, langDir, platform, command string) string {
+	return fmt.Sprintf("%s/%s/%s/%s.md",
+		strings.TrimSuffix(baseURL, "/"),
+		url.PathEscape(langDir),
+		url.PathEscape(platform),
+		url.PathEscape(command),
+	)
 }
 
 // fetch retrieves raw content from the given URL
@@ -701,6 +776,7 @@ func (c *Client) GetStorage() *Storage {
 func (c *Client) ClearMemoryCache() {
 	c.cacheMu.Lock()
 	c.memoryCache = make(map[string]*Page)
+	c.byName = make(map[string]*Page)
 	c.cacheMu.Unlock()
 	c.clearCommandCaches()
 }

@@ -1,0 +1,76 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    # Correctness
+    - bodyclose # HTTP response bodies must be closed
+    - errorlint # %w / errors.Is / errors.As instead of type assertions
+    - nilerr # do not return nil when err is non-nil
+    - rowserrcheck
+    - copyloopvar
+    # Security
+    - gosec
+    # Resource discipline — the audit found unbounded reads and a shared
+    # http.Client whose timeout was wrong for bulk transfers.
+    - noctx # HTTP requests must carry a context
+    - contextcheck
+    # Dead code — the audit removed ~2.7k lines of unreachable code; these keep
+    # it from growing back unnoticed.
+    - unconvert
+    - unparam
+    - wastedassign
+    # Readability
+    - misspell
+    - revive
+    - godot
+
+  settings:
+    errcheck:
+      # Deliberate discards are written as `_ = f()`; those are allowed. An
+      # unassigned ignored error is not.
+      check-blank: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # cosmetic, and it fights readable struct grouping
+    gosec:
+      excludes:
+        # File permissions are chosen deliberately per call site (0600 for the
+        # database, config, and rc-file backups; 0644 for logs).
+        - G306
+    revive:
+      rules:
+        - name: exported
+          disabled: true # not a library; exported docs are enforced by review
+        - name: unused-parameter
+          disabled: true
+    misspell:
+      locale: US
+
+  exclusions:
+    generated: lax
+    rules:
+      # Test files legitimately ignore errors and use weaker constructs.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+          - unparam
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - wut

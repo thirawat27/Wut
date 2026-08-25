@@ -3,9 +3,7 @@
 package main
 
 import (
-	"fmt"
 	"os"
-	"runtime"
 
 	"wut/cmd"
 )
@@ -17,8 +15,6 @@ var (
 	BuildTime = "unknown"
 	// Commit is set during build via ldflags
 	Commit = "unknown"
-	// GoVersion is the Go version used to build
-	GoVersion = runtime.Version()
 )
 
 func main() {
@@ -28,15 +24,7 @@ func main() {
 	cmd.Commit = Commit
 	cmd.SetVersionInfo()
 
-	// Run the application
-	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func run() error {
-	// Execute root command
-	cmd.Execute()
-	return nil
+	// cmd.Execute reports the exit code rather than terminating itself, so its
+	// deferred cleanup runs before the process ends.
+	os.Exit(cmd.Execute())
 }

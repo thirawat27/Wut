@@ -10,7 +10,6 @@ import (
 
 	"wut/internal/config"
 	"wut/internal/logger"
-	"wut/internal/metrics"
 	"wut/internal/ui"
 )
 
@@ -64,9 +63,6 @@ func runExplain(cmd *cobra.Command, args []string) error {
 	if err := displayExplanation(explanation, cfg); err != nil {
 		return err
 	}
-
-	// Record metrics
-	metrics.RecordCommandExplained()
 
 	return nil
 }

@@ -14,11 +14,17 @@ import (
 
 // Correction represents a suggested correction
 type Correction struct {
-	Original    string
-	Corrected   string
-	Confidence  float64
-	Explanation string
-	IsDangerous bool
+	Original   string
+	Corrected  string
+	Confidence float64
+	// Alternatives holds every candidate, best first, with Corrected as the
+	// first element. Callers that offer a picker cycle through these.
+	Alternatives []string
+	Explanation  string
+	IsDangerous  bool
+	// Source names the rule or stage that produced the correction, so the UI
+	// and tests can tell a fact-driven fix from an output-driven one.
+	Source string
 }
 
 // tokenFix records a single token correction
@@ -32,6 +38,27 @@ type tokenFix struct {
 type Corrector struct {
 	dangerousPatterns []string
 	historyCommands   []string
+
+	factsOnce   sync.Once
+	factsSource *Facts
+}
+
+// facts returns the lazily-created read-only fact source. Nothing is read or
+// probed until a rule actually asks a question.
+func (c *Corrector) facts() *Facts {
+	c.factsOnce.Do(func() {
+		if c.factsSource == nil {
+			c.factsSource = NewFacts()
+		}
+	})
+	return c.factsSource
+}
+
+// SetFacts overrides the fact source. Used by tests to point correction at a
+// fixture directory instead of the process working directory.
+func (c *Corrector) SetFacts(facts *Facts) {
+	c.factsOnce.Do(func() {})
+	c.factsSource = facts
 }
 
 // New creates a new Corrector.
@@ -52,33 +79,70 @@ func (c *Corrector) SetHistoryCommands(cmds []string) {
 
 // Correct analyzes the full command sentence and returns a Correction if any
 // token is misspelled, or nil when no issues are detected.
+//
+// Correct never executes the command. Rules that need the failed command's
+// error output are only reachable through CorrectWithOutput.
 func (c *Corrector) Correct(command string) (*Correction, error) {
+	return c.CorrectWithOutput(command, "")
+}
+
+// CorrectWithOutput behaves like Correct but also considers the error output
+// the caller already captured for this command — normally forwarded by the
+// shell integration, which saw the command fail in the user's own session.
+//
+// Supplying the output is what makes rules such as "git push --set-upstream"
+// or "npm run: Missing script" reachable. WUT deliberately does not re-run the
+// command to obtain it: re-running would repeat whatever side effects the
+// command had.
+func (c *Corrector) CorrectWithOutput(command, commandOutput string) (*Correction, error) {
 	// 1. Safety check first
 	if d := c.checkDangerous(command); d != nil {
 		return d, nil
 	}
 
-	// 1.5 Evaluate error combinations (100% matched rules based on command output)
-	if ruleFix := c.evaluateErrorRules(command); ruleFix != nil {
-		return ruleFix, nil
+	// Stages run best-first: a rule that knows exactly what went wrong beats a
+	// spelling guess, which beats a history match.
+	stages := []struct {
+		name string
+		run  func() *Correction
+	}{
+		// Rules consult WUT's own read-only facts and, when the caller captured
+		// it, the failed command's output.
+		{"rule", func() *Correction { return c.evaluateRules(command, commandOutput, c.facts()) }},
+		{"typo", func() *Correction { return c.correctSentence(command) }},
+		{"flags", func() *Correction { return c.correctShortFlags(command) }},
+		{"history", func() *Correction { return c.checkHistory(command) }},
 	}
 
-	// 2. Full-sentence, context-aware typo scan
-	if fix := c.correctSentence(command); fix != nil {
+	for _, stage := range stages {
+		fix := stage.run()
+		if fix == nil {
+			continue
+		}
+		if fix.Source == "" {
+			fix.Source = stage.name
+		}
+		normalizeCandidates(fix)
 		return fix, nil
-	}
-
-	// 3. Short-flag cluster correction (e.g. "-ait" with unknown chars for docker)
-	if fix := c.correctShortFlags(command); fix != nil {
-		return fix, nil
-	}
-
-	// 4. History-based full-sentence fuzzy match
-	if h := c.checkHistory(command); h != nil {
-		return h, nil
 	}
 
 	return nil, nil
+}
+
+// normalizeCandidates guarantees Alternatives is non-empty and starts with
+// Corrected, so every caller can treat a Correction as a candidate list without
+// special-casing the single-suggestion stages.
+func normalizeCandidates(fix *Correction) {
+	if fix.Corrected == "" {
+		return
+	}
+	if len(fix.Alternatives) == 0 {
+		fix.Alternatives = []string{fix.Corrected}
+		return
+	}
+	if fix.Alternatives[0] != fix.Corrected {
+		fix.Alternatives = append([]string{fix.Corrected}, fix.Alternatives...)
+	}
 }
 
 // correctShortFlags scans the command for short flag clusters with unknown

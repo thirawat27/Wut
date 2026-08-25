@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/atotto/clipboard"
@@ -31,7 +34,13 @@ var (
 	fixCopy      bool
 	fixList      bool
 	fixShellMode bool
+	fixStderr    string
+	fixNoConfirm bool
 )
+
+// lastStderrEnv lets the shell integration hand WUT the error output it already
+// saw, so WUT never has to re-run the command to observe how it failed.
+const lastStderrEnv = "WUT_LAST_STDERR"
 
 func init() {
 	rootCmd.AddCommand(fixCmd)
@@ -39,8 +48,45 @@ func init() {
 	fixCmd.Flags().BoolVarP(&fixCopy, "copy", "c", false, "copy corrected command to clipboard")
 	fixCmd.Flags().BoolVarP(&fixList, "list", "l", false, "list common typos")
 	fixCmd.Flags().BoolVar(&fixShellMode, "shell", false, "output corrected command only for shell integration")
+	fixCmd.Flags().StringVar(&fixStderr, "stderr", "", "file containing the failed command's output, or '-' to read stdin")
+	fixCmd.Flags().BoolVar(&fixNoConfirm, "no-confirm", false, "with --shell, emit the best correction without showing the picker")
 	_ = fixCmd.Flags().MarkHidden("shell")
+	_ = fixCmd.Flags().MarkHidden("stderr")
+	_ = fixCmd.Flags().MarkHidden("no-confirm")
 }
+
+// capturedCommandOutput returns the error output of the command being fixed, as
+// supplied by the caller. WUT reads it, it never produces it: re-running the
+// command to capture its own stderr would repeat the command's side effects.
+//
+// Precedence: --stderr file, then --stderr - (stdin), then $WUT_LAST_STDERR.
+func capturedCommandOutput() string {
+	switch {
+	case fixStderr == "-":
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, maxCapturedOutputBytes))
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	case fixStderr != "":
+		file, err := os.Open(fixStderr)
+		if err != nil {
+			return ""
+		}
+		defer file.Close()
+		data, err := io.ReadAll(io.LimitReader(file, maxCapturedOutputBytes))
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	default:
+		return os.Getenv(lastStderrEnv)
+	}
+}
+
+// maxCapturedOutputBytes bounds how much command output is parsed, so a runaway
+// producer cannot make WUT allocate without limit.
+const maxCapturedOutputBytes = 256 * 1024
 
 func runFix(cmd *cobra.Command, args []string) error {
 	// 1. Setup storage and corrector
@@ -106,8 +152,8 @@ func runFix(cmd *cobra.Command, args []string) error {
 		return runSemanticSearch(input)
 	}
 
-	// 4b. Perform typo/flag correction
-	correction, err := c.Correct(input)
+	// 4b. Perform typo/flag correction, using the error output the shell captured
+	correction, err := c.CorrectWithOutput(input, capturedCommandOutput())
 	if err != nil {
 		return err
 	}
@@ -138,6 +184,8 @@ func runFix(cmd *cobra.Command, args []string) error {
 
 	if correction.IsDangerous {
 		if fixShellMode {
+			// Never hand a destructive command back to a shell that is about to
+			// run it, whatever the user picks.
 			return fmt.Errorf("dangerous command")
 		}
 		displayCorrection(correction)
@@ -145,8 +193,7 @@ func runFix(cmd *cobra.Command, args []string) error {
 	}
 
 	if fixShellMode {
-		fmt.Println(strings.TrimSpace(correction.Corrected))
-		return nil
+		return emitForShell(correction)
 	}
 
 	// Display correction
@@ -162,6 +209,38 @@ func runFix(cmd *cobra.Command, args []string) error {
 
 	return nil
 }
+
+// emitForShell writes the accepted command to stdout for the shell integration
+// to run.
+//
+// Stdout is the channel back to the shell, so it must carry the command and
+// nothing else. When a terminal is available the user picks and confirms first,
+// on the terminal itself; without one, WUT declines rather than handing back a
+// command nobody saw.
+func emitForShell(correction *corrector.Correction) error {
+	candidates := correction.Alternatives
+	if len(candidates) == 0 {
+		candidates = []string{correction.Corrected}
+	}
+
+	if fixNoConfirm {
+		fmt.Println(strings.TrimSpace(candidates[0]))
+		return nil
+	}
+
+	chosen, err := pickCorrection(correction.Original, candidates)
+	if err != nil {
+		// Aborting is a normal outcome, not a failure to report loudly.
+		return errSilent
+	}
+
+	fmt.Println(strings.TrimSpace(chosen))
+	return nil
+}
+
+// errSilent unwinds runFix without printing anything. The shell integration
+// treats empty stdout as "do nothing".
+var errSilent = errors.New("")
 
 // looksLikeNaturalLanguage returns true when the input appears to be a
 // human-language description rather than a shell command.
