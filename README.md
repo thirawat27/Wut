@@ -63,6 +63,9 @@ wut db sync
 Open a new shell. The first command enables automatic context after failures;
 the second builds WUT's local command knowledge index.
 
+Need configuration, privacy, scripting, and troubleshooting details? Read the
+[full user guide](docs/user-guide.md).
+
 ### 3. Ask naturally
 
 ```console
