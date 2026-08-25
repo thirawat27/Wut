@@ -1,14 +1,18 @@
 <div align="center">
 
-# wut
+# wut (What?)
 
-**The terminal answers.**
+### Your terminal failed. Now it can answer back.
+
+**Repair a command. Recall an incantation. Understand the risk — without giving up control.**
+
+[![CI](https://img.shields.io/github/actions/workflow/status/thirawat27/wut/ci.yml?branch=main&label=CI)](https://github.com/thirawat27/wut/actions/workflows/ci.yml)
+[![Go 1.25](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-8A2BE2)](LICENSE)
 
 </div>
 
----
-
-```
+```console
 $ git psuh -u origin main
 git: 'psuh' is not a git command. See 'git --help'.
 
@@ -23,160 +27,138 @@ the last command failed
   ↑↓ choose   ⏎ run   w why   e edit   esc cancel
 ```
 
-Three letters. One name to remember.
+> WUT suggests; you decide. It never re-runs the command that failed.
 
-## What it is
+## Start here
 
-WUT exists for one moment: you typed something, and it failed, or you do not
-know the incantation. That question has three faces, and they are all the same
-question at different times:
-
-| | You are thinking | You type |
-|---|---|---|
-| **Repair** | "that failed — what did I mean?" | `wut` |
-| **Recall** | "how do I do X with this thing?" | `wut compress a folder to tar.gz` |
-| **Comprehend** | "what will this do to my machine?" | `wut explain "rm -rf ./build"` |
-
-## Four things that make it different
-
-**It never runs your command.** Not as a policy — as a property of the build.
-An architecture test fails CI if `os/exec` appears anywhere except the
-read-only fact prober, and that prober compares every invocation against an
-allowlist argv-for-argv. Tools that re-run your failed command to read its
-error message will push twice after a failed `git push`. This one cannot.
-
-**It always tells you why.** Every suggestion carries its reasons, each with a
-source you can check — a rule id, a `git rev-parse`, a line in `package.json`.
-A candidate with no reasons cannot be displayed; that is enforced in the type,
-not by convention.
-
-**It knows what actually happened.** The shell records the command, its exit
-code, the directory, and how long it took — using shell builtins only, no
-process spawned, under a millisecond. So `wut` on its own already knows what
-you are asking about.
-
-**It stays on your machine.** No account, no telemetry, no cloud model, and no
-model download either: the semantic index that makes natural-language questions
-work is trained from the tldr pages themselves during `wut db sync`. An
-optional wording model can use a local runtime you already have, and it is
-never allowed to invent a command — it can only reorder and rephrase answers
-that came from the pages, and every flag it writes is checked against the
-source page before you see it.
-
-## Install
+### 1. Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.sh | sh
 ```
 
-The script verifies the SHA-256 of the archive against `checksums.txt` and
-refuses to install if they disagree. On Windows, use `scripts/install.ps1`.
-From source:
+On Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/thirawat27/wut/main/scripts/install.ps1 | iex
+```
+
+Both installers verify the downloaded archive against `checksums.txt` before
+installing it. Prefer building from source? Run:
 
 ```bash
 go install github.com/thirawat27/wut/cmd/wut@latest
 ```
 
-Then:
+### 2. Let your shell share useful context
 
 ```bash
 wut shell install
 wut db sync
 ```
 
-and open a new shell.
+Open a new shell. The first command enables automatic context after failures;
+the second builds WUT's local command knowledge index.
 
-## Commands
+### 3. Ask naturally
 
-```
-wut                          correct the last command that failed
-wut <question>               ask in plain language
-wut ask <question>           the same, when your question starts with a
-                             word that is also a command below
-wut ui [question]            search, read, and keep commands on one screen
-wut fix [command]            correct a specific command
-wut explain <command>        say what a command does and what it changes
-wut save [command]           keep a command you want to find again
-wut alias set <name> <cmd>   define a shorthand
-wut history [--stats]        what your shell has told WUT
-wut shell install|status     shell integration
-wut shell capture <tier>     how much the shell tells WUT
-wut db sync|status           the knowledge index
-wut daemon start|status      the optional background helper
-wut model status             which models are in use
-wut risk check <command>     ask the safety policy about a command
-wut rules list               the correction rules
-wut config show|set|explain  read and change settings
-wut doctor                   what WUT can and cannot see here
-wut purge                    delete everything WUT has recorded
+```console
+$ wut compress a folder to tar.gz
+$ wut explain "rm -rf ./build"
+$ wut fix "git psuh"
 ```
 
-Every command takes `--output json`, conforming to a versioned schema in
-[`pkg/wutjson`](pkg/wutjson/wutjson.go).
+## Three moments. One command to remember.
 
-## Which shells
+| When you need… | Try this | WUT helps you… |
+| --- | --- | --- |
+| **A repair** | `wut` | correct the last command that failed |
+| **A recall** | `wut how do I squash the last 3 commits` | find a grounded command in plain language |
+| **An explanation** | `wut explain "rm -rf ./build"` | see what a command can change before you run it |
+
+If your question starts with a WUT subcommand, use `wut ask <question>` to
+make it unambiguous.
+
+## Why it feels safe to use
+
+| | What WUT does | Why it matters |
+| --- | --- | --- |
+| **✦ Never executes your command** | Suggestions are displayed, not silently replayed. Architecture tests restrict process execution to a read-only, argv-allowlisted fact prober. | A failed `git push` cannot become a second push. |
+| **✦ Shows its work** | Every suggestion includes checkable reasons: a rule id, a Git fact, or source-page evidence. | You can judge the answer instead of trusting a black box. |
+| **✦ Remembers the failure, not your life** | Shell hooks capture the command, exit code, directory, and duration with shell builtins. | Bare `wut` knows what just happened without slowing your prompt. |
+| **✦ Stays local** | No account, telemetry, cloud model, or model download is required. | Your terminal history remains on your machine. |
+
+## Privacy, on your terms
+
+WUT records only the amount of context you choose. The default, **T0.5**, adds
+the missing-command name to basic failure data; it does not read command output.
+
+| Tier | WUT records | Default |
+| --- | --- | --- |
+| `off` | Nothing | |
+| `T0` | Command, exit code, directory, duration | |
+| `T0.5` | T0 plus the name of a command that was not found | **Yes** |
+| `T1` | T0.5 plus error text | No |
+
+`T1` output is capped, scrubbed for credentials and tokens, retained for at
+most 24 hours, and never leaves the machine. Remove captured data whenever you
+want with `wut purge`.
+
+## Shell support
 
 No shell is dropped, and none is promised more than it can deliver.
 
-| Class | Shells | What you get |
-|---|---|---|
-| **Full** | zsh · fish · PowerShell 7 · Windows PowerShell · nushell · xonsh · elvish | Automatic capture. Bare `wut` just works. |
-| **Full — later** | bash | Same, once coexistence with `bash-preexec` / Starship is verified. |
-| **Manual** | sh · dash · ksh · cmd.exe | No hook surface exists. `wut fix "<cmd>"` and `cmd 2>&1 \| wut` work exactly as well as anywhere. |
+| Support class | Shells | Experience |
+| --- | --- | --- |
+| **Full** | zsh · fish · PowerShell 7 · Windows PowerShell · nushell · xonsh · elvish | Automatic capture: bare `wut` works after a failure. |
+| **Full — later** | bash | The same integration is being smoke-tested; promotion awaits coexistence checks with `bash-preexec` and Starship. |
+| **Manual** | sh · dash · ksh · cmd.exe | Use `wut fix "<command>"` or pipe a command's output to `wut`. |
 
-`wut doctor` tells you which one you got. Every claim in that table is checked
-by `scripts/shell-matrix.sh`, which sources the real hook into a live session
-of each shell, runs a command that fails, and asserts the record.
+Run `wut doctor` to see the support class and setup state of your current
+shell. The [live shell matrix](scripts/shell-matrix.sh) tests each Full-class
+claim in a real shell session.
 
-## What WUT records
+## Command compass
 
-| Tier | Contents | Default |
-|---|---|---|
-| `off` | nothing | |
-| `T0` | command, exit code, directory, duration | |
-| `T0.5` | T0 plus the name of a command that was not found | **on** |
-| `T1` | T0.5 plus the error text | off |
+| Goal | Commands |
+| --- | --- |
+| Ask and repair | `wut`, `wut ask`, `wut fix`, `wut explain`, `wut ui` |
+| Save what matters | `wut save`, `wut alias set`, `wut history` |
+| Tune your setup | `wut shell install\|status`, `wut db sync\|status`, `wut config show\|set\|explain` |
+| Inspect and control | `wut doctor`, `wut risk check`, `wut rules list`, `wut model status`, `wut daemon start\|status` |
+| Remove local data | `wut purge` |
 
-T1 is the only tier that reads output. It is capped, scrubbed for credentials
-and tokens, deleted after 24 hours, and never leaves the machine.
-`wut purge` deletes all of it, immediately.
+Every command supports `--output json`, using the versioned schema in
+[`pkg/wutjson`](pkg/wutjson/wutjson.go).
 
-## How good is it, honestly
+## An honest note about search
 
-Natural-language search is the weakest part, and it is measured rather than
-asserted. `internal/eval` runs 203 questions against the real index:
+Natural-language search is useful, but it is not where WUT wants it to be yet.
+The current retrieval benchmark reaches **45.8% top-3 page hit rate** against
+an **80% target**. Questions that reuse documentation wording work best;
+questions needing world knowledge often need a better sentence encoder.
 
-| | Target | Measured |
-|---|---|---|
-| Top-3 page hit rate | 80% | **46%** |
-| Top-3, lexical only, no semantic layer | 60% | **41%** |
-| False corrections on already-correct commands | 0 | **0 of 27** |
-| Invented flags surviving the grounding check | 0 | **0 of 30** |
+That gap is deliberate product information, not fine print: benchmark floors
+run in CI so quality cannot quietly regress. See the
+[evaluation design](docs/architecture/06-intelligence-slm.md) for the full
+methodology.
 
-**The retrieval target is not met.** Questions whose words appear in the
-documentation work well; questions needing world knowledge — "see which process
-is using a port" should reach `lsof` — often do not. That is the ceiling of
-keyword search plus embeddings trained from the same corpus, and closing it
-needs a real sentence encoder. The benchmark asserts against a floor so the
-number cannot quietly get worse, and prints the target on every run so it
-cannot quietly be forgotten.
-
-## Development
+## Develop WUT
 
 ```bash
-go test ./...                    # everything
-go test ./internal/arch/...      # the architecture rules
-go test ./internal/eval/...      # is it any good, rather than does it work
-bash scripts/shell-matrix.sh     # live shell sessions
+go test ./...                    # test the whole project
+go test ./internal/arch/...      # enforce the architecture rules
+go test ./internal/eval/...      # measure answer quality
+bash scripts/shell-matrix.sh     # exercise real shell sessions
 go build -o build/wut ./cmd/wut
 ```
 
-`internal/arch` is worth reading first: it is the set of rules that keep the
-design from decaying, and every one of them is a defect found in the tool this
-one replaces.
+Start with [`internal/arch`](internal/arch): these tests protect the boundaries
+that keep WUT from turning into a tool that acts without permission. The
+[architecture guide](docs/architecture/README.md) explains the decisions behind
+them.
 
-The design is in [`docs/architecture/`](docs/architecture/README.md).
+## License
 
-## Licence
-
-MIT.
+[MIT](LICENSE) . Thirawat27
+ 
