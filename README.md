@@ -12,6 +12,8 @@
 
 </div>
 
+### Example session
+
 ```console
 $ git psuh -u origin main
 git: 'psuh' is not a git command. See 'git --help'.
@@ -28,6 +30,7 @@ the last command failed
 ```
 
 > WUT suggests; you decide. It never re-runs the command that failed.
+> Timing, capture tier, and picker controls reflect your shell and terminal.
 
 ## Start here
 
@@ -161,4 +164,3 @@ them.
 ## License
 
 [MIT](LICENSE) . Thirawat27
- 
