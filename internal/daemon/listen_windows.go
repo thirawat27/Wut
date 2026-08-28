@@ -8,7 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 )
+
+// probeDialTimeout bounds the "is one already running" check, so a wedged
+// listener cannot hang a daemon start.
+const probeDialTimeout = 2 * time.Second
 
 // Windows has AF_UNIX in recent builds, but Go's net package does not expose
 // named pipes, and unix sockets on Windows do not support the permission model
@@ -44,10 +49,10 @@ func existingListener(dir string) (string, bool) {
 		return "", false
 	}
 	addr := string(data)
-	if _, _, err := net.SplitHostPort(addr); err != nil {
+	if checkLoopback(addr) != nil {
 		return "", false
 	}
-	conn, err := net.Dial("tcp", addr)
+	conn, err := net.DialTimeout("tcp", addr, probeDialTimeout)
 	if err != nil {
 		_ = os.Remove(socketPath(dir)) // stale
 		return "", false
@@ -56,11 +61,35 @@ func existingListener(dir string) (string, bool) {
 	return addr, true
 }
 
-func dial(addr string) (net.Conn, error) {
-	if _, port, err := net.SplitHostPort(addr); err != nil || port == "" {
-		return nil, fmt.Errorf("not a loopback address: %q", addr)
-	} else if _, err := strconv.Atoi(port); err != nil {
-		return nil, fmt.Errorf("not a loopback address: %q", addr)
+// dial connects to a daemon, giving up after timeout.
+//
+// The bound belongs to the dialler rather than to a race against a timer: a
+// dial abandoned by a timer still completes, and the connection it produced
+// has nobody left to close it.
+func dial(addr string, timeout time.Duration) (net.Conn, error) {
+	if err := checkLoopback(addr); err != nil {
+		return nil, err
 	}
-	return net.Dial("tcp", addr)
+	return net.DialTimeout("tcp", addr, timeout)
+}
+
+// checkLoopback rejects anything that is not this machine.
+//
+// The address comes out of the handshake file, and the client presents its
+// token to whatever that file names. Validating only the port — which is what
+// this did — meant a tampered or stale handshake file could send the token to
+// any host on the network. The error message claimed the check all along; this
+// is the check.
+func checkLoopback(addr string) error {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return fmt.Errorf("not a loopback address: %q", addr)
+	}
+	if _, err := strconv.Atoi(port); err != nil {
+		return fmt.Errorf("not a loopback address: %q", addr)
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("not a loopback address: %q", addr)
+	}
+	return nil
 }

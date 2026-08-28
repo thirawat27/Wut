@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thirawat27/wut/internal/core/config"
 	"github.com/thirawat27/wut/internal/port"
 )
 
@@ -70,6 +71,13 @@ func (m *Manager) apply(req port.InstallRequest, remove bool) (port.InstallRepor
 	if req.Alias != "" {
 		params.Alias = req.Alias
 	}
+	// The alias reaches generated shell code as a function name, which no
+	// quoting can protect. Config validation already refuses a bad one, but
+	// --alias arrives here without passing through it, and this is the last
+	// point before a startup file is written.
+	if err := config.ValidateAlias(params.Alias); err != nil {
+		return port.InstallReport{}, fmt.Errorf("alias: %w", err)
+	}
 
 	targets := req.Shells
 	if len(targets) == 0 {
@@ -116,11 +124,11 @@ func (m *Manager) applyOne(name string, params Params, dryRun, remove bool) port
 		return change
 	}
 
-	var updated string
-	if remove {
-		updated = removeBlock(string(existing), spec)
-	} else {
-		updated = upsertBlock(string(existing), spec, Render(spec, params))
+	updated, err := editBlock(string(existing), spec, params, remove)
+	if err != nil {
+		change.Action = "skipped"
+		change.Err = err.Error()
+		return change
 	}
 
 	if updated == string(existing) {
@@ -134,6 +142,14 @@ func (m *Manager) applyOne(name string, params Params, dryRun, remove bool) port
 		return change
 	}
 
+	// Keep whatever mode the file already had. A startup file is the user's,
+	// and quietly tightening a 0644 .bashrc to 0600 is a change nobody asked
+	// for and nobody is told about.
+	perm := os.FileMode(0o600)
+	if info, err := os.Stat(rc); err == nil {
+		perm = info.Mode().Perm()
+	}
+
 	if len(existing) > 0 {
 		backup, err := writeBackup(rc, existing)
 		if err != nil {
@@ -144,13 +160,13 @@ func (m *Manager) applyOne(name string, params Params, dryRun, remove bool) port
 		change.Backup = backup
 	}
 
-	if err := writeFileAtomic(rc, []byte(updated), 0o600); err != nil {
+	if err := writeFileAtomic(rc, []byte(updated), perm); err != nil {
 		change.Action = "skipped"
 		change.Err = err.Error()
 		// Put the original back: a half-written rc file can stop a shell from
 		// starting, which is the worst outcome this package can produce.
 		if change.Backup != "" {
-			_ = os.WriteFile(rc, existing, 0o600)
+			_ = os.WriteFile(rc, existing, perm)
 		}
 		return change
 	}
@@ -169,57 +185,87 @@ func verb(remove, had bool) string {
 	}
 }
 
+// ErrMalformedBlock reports a managed block that starts and never ends.
+//
+// It is returned rather than worked around. Guessing where a hand-edited block
+// stops risks deleting the rest of someone's startup file, and appending a
+// second block beside it leaves two copies of the hook installed — which was
+// the old behaviour, and produced doubled records with no visible cause.
+var ErrMalformedBlock = errors.New(
+	"this file has a `" + blockBegin + "` marker with no matching `" + blockEnd + "`. " +
+		"Repair or delete that block by hand, then run this again")
+
+// blockState is what findBlock found.
+type blockState int
+
+const (
+	blockAbsent    blockState = iota // no marker at all: append a new one
+	blockFound                       // a complete block: replace it in place
+	blockMalformed                   // a begin with no end: refuse to touch it
+)
+
+// editBlock returns the new contents of a startup file.
+func editBlock(content string, spec Spec, params Params, remove bool) (string, error) {
+	start, end, state := findBlock(content, spec)
+	if state == blockMalformed {
+		return "", ErrMalformedBlock
+	}
+	if remove {
+		return removeBlock(content, start, end, state), nil
+	}
+	return upsertBlock(content, start, end, state, Render(spec, params)), nil
+}
+
 // upsertBlock replaces an existing managed block or appends a new one.
-func upsertBlock(content string, spec Spec, block string) string {
-	start, end, ok := findBlock(content, spec)
-	if ok {
+func upsertBlock(content string, start, end int, state blockState, block string) string {
+	if state == blockFound {
 		return content[:start] + block + content[end:]
 	}
 	if content != "" && !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
 	if content != "" {
-		content += "\n"
+		content += "\n" // the separator blank line, removed again on uninstall
 	}
 	return content + block
 }
 
 // removeBlock deletes the managed block and the blank line that was added with
-// it, so uninstall returns the file to exactly what it was.
-func removeBlock(content string, spec Spec) string {
-	start, end, ok := findBlock(content, spec)
-	if !ok {
+// it.
+//
+// The separator is removed by inverting exactly what upsertBlock added — one
+// newline, and only when the block was the last thing in the file. Trimming
+// every trailing newline instead was wrong in a way the tests missed: it
+// silently ate blank lines the user had put at the end of their own file.
+func removeBlock(content string, start, end int, state blockState) string {
+	if state != blockFound {
 		return content
 	}
 	out := content[:start] + content[end:]
-	// Collapse the separator blank line introduced at install time.
-	out = strings.TrimRight(out, "\n")
-	if out != "" {
-		out += "\n"
+	if content[end:] == "" && strings.HasSuffix(out, "\n") {
+		out = out[:len(out)-1]
 	}
 	return out
 }
 
 // findBlock locates the byte range of the managed block, markers included.
-func findBlock(content string, spec Spec) (start, end int, ok bool) {
+func findBlock(content string, spec Spec) (start, end int, state blockState) {
 	beginMarker := spec.Comment + " " + blockBegin
 	endMarker := spec.Comment + " " + blockEnd
 
 	i := strings.Index(content, beginMarker)
 	if i < 0 {
-		return 0, 0, false
+		return 0, 0, blockAbsent
 	}
 	j := strings.Index(content[i:], endMarker)
 	if j < 0 {
-		// A begin with no end means someone edited the block by hand. Refuse
-		// to guess where it stops rather than deleting the rest of their file.
-		return 0, 0, false
+		return 0, 0, blockMalformed
 	}
 	end = i + j + len(endMarker)
 	if end < len(content) && content[end] == '\n' {
 		end++
 	}
-	return i, end, true
+	return i, end, blockFound
 }
 
 // writeBackup keeps a timestamped copy next to the original.
