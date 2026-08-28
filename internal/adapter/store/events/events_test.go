@@ -356,3 +356,75 @@ func TestOutputExpires(t *testing.T) {
 		t.Error("output inside the retention window was dropped")
 	}
 }
+
+// Appending must not cost time proportional to the log.
+//
+// The old trim read and JSON-decoded every record on every append just to
+// learn how many there were, so a shell session with a full log paid tens of
+// milliseconds per record ingested. The bound below is deliberately loose: it
+// is there to catch a return to linear behaviour, not to police nanoseconds.
+func TestAppendDoesNotScaleWithLogSize(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing test")
+	}
+	cfg := config.Default()
+	cfg.History.MaxEntries = 20000
+	s, err := New(t.TempDir(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	const fill = 4000
+	for i := 0; i < fill; i++ {
+		if err := s.Append(ctx, event.Event{Session: "x", Seq: uint64(i), Raw: "git stat"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const measured = 200
+	start := time.Now()
+	for i := 0; i < measured; i++ {
+		if err := s.Append(ctx, event.Event{Session: "x", Seq: uint64(fill + i), Raw: "git status"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	per := time.Since(start) / measured
+	if per > 2*time.Millisecond {
+		t.Errorf("append costs %v with %d records in the log; it should not scale with the log", per, fill)
+	}
+
+	// And the records are all still there.
+	got, err := s.Recent(ctx, event.Filter{Limit: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != fill+measured {
+		t.Errorf("log holds %d records, want %d", len(got), fill+measured)
+	}
+}
+
+// The ring bound still has to hold once the log goes over it.
+func TestTrimStillEnforcesTheBound(t *testing.T) {
+	cfg := config.Default()
+	cfg.History.MaxEntries = 50
+	s, err := New(t.TempDir(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for i := 0; i < 500; i++ {
+		if err := s.Append(ctx, event.Event{Session: "x", Seq: uint64(i), Raw: "cmd"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.Recent(ctx, event.Filter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) > 55 || len(got) < 50 {
+		t.Errorf("log holds %d records, want the bound of 50 (+10%% slack)", len(got))
+	}
+	if got[0].Seq != 499 {
+		t.Errorf("newest record is seq %d, want 499", got[0].Seq)
+	}
+}

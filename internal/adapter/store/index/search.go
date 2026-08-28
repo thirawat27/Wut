@@ -78,7 +78,6 @@ func (r *Reader) Search(ctx context.Context, q knowledge.Query, limit int) ([]kn
 	avgLen := r.averageUnitLength()
 	scores := make(map[uint32]float64, 256)
 	matched := make(map[uint32]int, 256)
-	reasons := make(map[uint32][]string, 256)
 	idfByTerm := make(map[string]float64, len(terms))
 
 	for _, term := range terms {
@@ -117,94 +116,17 @@ func (r *Reader) Search(ctx context.Context, q knowledge.Query, limit int) ([]kn
 
 	// Boosts are applied after the base score so the reason strings can name
 	// which one fired.
-	termSet := make(map[string]bool, len(terms))
-	for _, t := range terms {
-		termSet[t] = true
-	}
-
-	type scored struct {
-		id    uint32
-		score float64
-	}
-	ranked := make([]scored, 0, len(scores))
-	for id, base := range scores {
-		if int(id) >= len(r.units) {
-			continue
-		}
-		u := r.units[id]
-		page, err := r.Page(u.Page)
-		if err != nil {
-			continue
-		}
-		name := strings.ToLower(page.Name)
-		score := base * platformWeight(page.Platform, q.Platforms)
-		var why []string
-
-		// Naming a command only counts as naming it when something else in the
-		// question also matches that page.
-		//
-		// "make a file executable" and "see which process is using a port" both
-		// contain a real command name — make(1) and port(1) — used as ordinary
-		// English. In both, the command name is the *only* thing that matches,
-		// while chmod and lsof match the rest of the question. Requiring a
-		// second match separates the two cases without a list of English verbs
-		// to maintain.
-		// A page's own summary unit is almost never the answer to a how-to
-		// question — the example is. So the name boost goes to examples once
-		// the question is long enough to be a how-to rather than a lookup.
-		isHowTo := len(terms) >= 3
-		namesTheCommand := termSet[name] &&
-			(matched[id] >= 2 || len(terms) == 1) &&
-			(u.Example >= 0 || !isHowTo)
-
-		switch {
-		case namesTheCommand:
-			// Scale by how distinctive the word is. A name that is also a
-			// common English word earns almost nothing here; a name that
-			// appears nowhere else earns the full boost.
-			// A floor, because naming the command is always some evidence
-			// even when the word is common: someone typing "find files larger
-			// than 100M" probably does mean find(1). The floor is small enough
-			// that it does not resurrect the "compress" problem.
-			rarity := nameFloor + (1-nameFloor)*math.Min(1, idfByTerm[name]/nameRarityCeiling)
-			score += boostExactName * rarity
-			if rarity > 0.6 {
-				why = append(why, fmt.Sprintf("the question names %q", page.Name))
-			}
-		default:
-			for t := range termSet {
-				if len(t) >= 3 && strings.HasPrefix(name, t) {
-					score += boostPrefixName * math.Min(1, idfByTerm[t]/nameRarityCeiling)
-					why = append(why, fmt.Sprintf("%q starts with %q", page.Name, t))
-					break
-				}
-			}
-		}
-		if u.Example >= 0 {
-			score += boostIsExample
-		}
-		// Coverage, squared, rather than all-or-nothing. Matching three of
-		// four words is much better than two, and demanding all four means a
-		// single unindexed word throws away the right answer.
-		if len(terms) > 1 {
-			coverage := float64(matched[id]) / float64(len(terms))
-			score += boostCoverage * coverage * coverage
-			if matched[id] == len(terms) {
-				why = append(why, "every word in the question appears here")
-			}
-		}
-		if sem, ok := semantic[id]; ok {
-			why = append(why, semanticReason(sem))
-		}
-		if len(why) == 0 {
-			if _, lexical := lexicalOnly[id]; lexical {
-				why = append(why, matchReason(matched[id], len(terms)))
-			} else {
-				why = append(why, semanticReason(semantic[id]))
-			}
-		}
-		reasons[id] = why
-		ranked = append(ranked, scored{id: id, score: score})
+	ranked := r.rank(ranking{
+		scores:      scores,
+		lexicalOnly: lexicalOnly,
+		semantic:    semantic,
+		matched:     matched,
+		idf:         idfByTerm,
+		terms:       terms,
+		platforms:   q.Platforms,
+	})
+	if len(ranked) == 0 {
+		return nil, nil
 	}
 
 	sort.SliceStable(ranked, func(i, j int) bool {
@@ -233,6 +155,10 @@ func (r *Reader) Search(ctx context.Context, q knowledge.Query, limit int) ([]kn
 		if perPage[u.Page] >= maxPerPage {
 			continue
 		}
+		// The only place a page is decoded. Scoring answers from the names
+		// section instead, because decompressing a page per candidate unit
+		// made a broad query read most of the corpus — half a second and a
+		// gigabyte of garbage for one question.
 		page, err := r.Page(u.Page)
 		if err != nil {
 			continue
@@ -242,7 +168,7 @@ func (r *Reader) Search(ctx context.Context, q knowledge.Query, limit int) ([]kn
 			Page:     page,
 			Example:  int(u.Example),
 			Score:    clamp01(s.score / best * 0.95),
-			Reason:   strings.Join(reasons[s.id], "; "),
+			Reason:   renderReasons(s.why, page),
 			Producer: producerFor(lexicalOnly[s.id] > 0, semantic[s.id] > 0),
 		}
 		cmd := strings.TrimSpace(h.Command())
@@ -253,6 +179,158 @@ func (r *Reader) Search(ctx context.Context, q knowledge.Query, limit int) ([]kn
 		hits = append(hits, h)
 	}
 	return hits, nil
+}
+
+// scored is one candidate unit and everything decided about it before any page
+// was read.
+type scored struct {
+	id    uint32
+	score float64
+	why   []reason
+}
+
+// reason is one line of "why this matched", held until the page it describes
+// is decoded.
+//
+// Two of the reasons quote the command's own name, and the name is only known
+// in the case its page was written in once that page is read. Scoring must not
+// read pages, so the wording is finished at the end, for the handful of
+// results actually returned.
+type reason struct {
+	// text is either the finished line, or a format string taking the page
+	// name and then word.
+	text     string
+	withName bool
+	word     string
+}
+
+// fixedReason is a line that needs nothing from the page.
+func fixedReason(text string) reason { return reason{text: text} }
+
+func (r reason) render(page knowledge.Page) string {
+	switch {
+	case !r.withName:
+		return r.text
+	case r.word != "":
+		return fmt.Sprintf(r.text, page.Name, r.word)
+	default:
+		return fmt.Sprintf(r.text, page.Name)
+	}
+}
+
+func renderReasons(why []reason, page knowledge.Page) string {
+	out := make([]string, 0, len(why))
+	for _, w := range why {
+		out = append(out, w.render(page))
+	}
+	return strings.Join(out, "; ")
+}
+
+// ranking is everything the boost pass needs that the scoring pass produced.
+// Passing it explicitly keeps a Reader shared between goroutines free of
+// per-query state.
+type ranking struct {
+	scores      map[uint32]float64
+	lexicalOnly map[uint32]float64
+	semantic    map[uint32]float64
+	matched     map[uint32]int
+	idf         map[string]float64
+	terms       []string
+	platforms   []knowledge.Platform
+}
+
+// rank applies the boosts to every scored unit.
+//
+// It reads a page's name and platform from the names section rather than from
+// the page itself: both are already in memory, indexed by page id, and going
+// through the compressed page for them is what made this loop the most
+// expensive thing WUT does.
+func (r *Reader) rank(in ranking) []scored {
+	terms := in.terms
+	termSet := make(map[string]bool, len(terms))
+	for _, t := range terms {
+		termSet[t] = true
+	}
+	// A page's own summary unit is almost never the answer to a how-to
+	// question — the example is. So the name boost goes to examples once the
+	// question is long enough to be a how-to rather than a lookup.
+	isHowTo := len(terms) >= 3
+
+	out := make([]scored, 0, len(in.scores))
+	for id, base := range in.scores {
+		if int(id) >= len(r.units) {
+			continue
+		}
+		u := r.units[id]
+		name, platform, ok := r.pageMeta(u.Page)
+		if !ok {
+			continue
+		}
+		score := base * platformWeight(platform, in.platforms)
+		var why []reason
+
+		// Naming a command only counts as naming it when something else in the
+		// question also matches that page.
+		//
+		// "make a file executable" and "see which process is using a port" both
+		// contain a real command name — make(1) and port(1) — used as ordinary
+		// English. In both, the command name is the *only* thing that matches,
+		// while chmod and lsof match the rest of the question. Requiring a
+		// second match separates the two cases without a list of English verbs
+		// to maintain.
+		namesTheCommand := termSet[name] &&
+			(in.matched[id] >= 2 || len(terms) == 1) &&
+			(u.Example >= 0 || !isHowTo)
+
+		switch {
+		case namesTheCommand:
+			// Scale by how distinctive the word is. A name that is also a
+			// common English word earns almost nothing here; a name that
+			// appears nowhere else earns the full boost.
+			// A floor, because naming the command is always some evidence
+			// even when the word is common: someone typing "find files larger
+			// than 100M" probably does mean find(1). The floor is small enough
+			// that it does not resurrect the "compress" problem.
+			rarity := nameFloor + (1-nameFloor)*math.Min(1, in.idf[name]/nameRarityCeiling)
+			score += boostExactName * rarity
+			if rarity > 0.6 {
+				why = append(why, reason{text: "the question names %q", withName: true})
+			}
+		default:
+			for t := range termSet {
+				if len(t) >= 3 && strings.HasPrefix(name, t) {
+					score += boostPrefixName * math.Min(1, in.idf[t]/nameRarityCeiling)
+					why = append(why, reason{text: "%q starts with %q", withName: true, word: t})
+					break
+				}
+			}
+		}
+		if u.Example >= 0 {
+			score += boostIsExample
+		}
+		// Coverage, squared, rather than all-or-nothing. Matching three of
+		// four words is much better than two, and demanding all four means a
+		// single unindexed word throws away the right answer.
+		if len(terms) > 1 {
+			coverage := float64(in.matched[id]) / float64(len(terms))
+			score += boostCoverage * coverage * coverage
+			if in.matched[id] == len(terms) {
+				why = append(why, fixedReason("every word in the question appears here"))
+			}
+		}
+		if sem, ok := in.semantic[id]; ok {
+			why = append(why, fixedReason(semanticReason(sem)))
+		}
+		if len(why) == 0 {
+			if _, lexical := in.lexicalOnly[id]; lexical {
+				why = append(why, fixedReason(matchReason(in.matched[id], len(terms))))
+			} else {
+				why = append(why, fixedReason(semanticReason(in.semantic[id])))
+			}
+		}
+		out = append(out, scored{id: id, score: score, why: why})
+	}
+	return out
 }
 
 func matchReason(matched, total int) string {
