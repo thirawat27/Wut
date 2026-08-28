@@ -13,10 +13,12 @@ package events
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,6 +49,11 @@ type Store struct {
 	sessions string
 	cfg      config.Config
 	redactor *Redactor
+
+	// lines is how many records the log file holds, or -1 when that is not
+	// established yet. Tracking it is what keeps an append O(1): see
+	// trimLocked.
+	lines int
 }
 
 var _ port.EventStore = (*Store)(nil)
@@ -69,6 +76,7 @@ func New(stateDir string, cfg config.Config) (*Store, error) {
 		sessions: sessions,
 		cfg:      cfg,
 		redactor: red,
+		lines:    -1,
 	}, nil
 }
 
@@ -120,6 +128,7 @@ func (s *Store) Append(ctx context.Context, e event.Event) error {
 	if err := appendLine(s.path, line); err != nil {
 		return err
 	}
+	s.countAppendLocked()
 	// Trim only after the handle is closed. Trimming rewrites the file by
 	// removing and renaming, and Windows refuses to remove a file that is
 	// still open — so with the write handle held open by a defer, trimming
@@ -228,6 +237,7 @@ func (s *Store) Purge(ctx context.Context) (int, error) {
 	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return 0, err
 	}
+	s.lines = 0
 	entries, err := os.ReadDir(s.sessions)
 	if err != nil {
 		return n, nil
@@ -303,21 +313,84 @@ func (s *Store) readAllLocked() ([]event.Event, error) {
 	return out, sc.Err()
 }
 
+// countAppendLocked records that one more line is on disk.
+//
+// The first call establishes the length by counting newlines, which is one
+// linear scan with no decoding and no allocation per record. Every call after
+// it is an increment.
+func (s *Store) countAppendLocked() {
+	if s.lines < 0 {
+		// The line just written is already in the file, so this count includes
+		// it and must not be incremented again.
+		if n, err := countLines(s.path); err == nil {
+			s.lines = n
+		}
+		return
+	}
+	s.lines++
+}
+
+// countLines reports how many newline-terminated records the log holds.
+func countLines(path string) (int, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	var (
+		buf     = make([]byte, 64<<10)
+		newline = []byte{'\n'}
+		lines   int
+	)
+	for {
+		n, err := f.Read(buf)
+		lines += bytes.Count(buf[:n], newline)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return lines, nil
+			}
+			return lines, err
+		}
+	}
+}
+
 // trimLocked enforces the ring bound. Enforcing on write rather than by a
 // sweeper means a machine that is never idle still stays bounded.
+//
+// The length comes from the tracked count, not from re-reading the log.
+// Decoding every record on every append to learn how many there were made an
+// append cost time proportional to the log — at the default bound of twenty
+// thousand entries, tens of milliseconds, paid by every `wut` invocation
+// because ingestion appends.
 func (s *Store) trimLocked() error {
 	max := s.cfg.History.MaxEntries
 	if max <= 0 {
 		return nil
 	}
+	// Rewrite only when meaningfully over, so a busy shell is not rewriting
+	// the whole file on every command.
+	limit := max + max/10
+	if s.lines >= 0 && s.lines <= limit {
+		return nil
+	}
 	all, err := s.readAllLocked()
-	if err != nil || len(all) <= max+max/10 {
-		// Rewrite only when meaningfully over, so a busy shell is not
-		// rewriting the whole file on every command.
+	if err != nil {
 		return err
 	}
+	s.lines = len(all)
+	if len(all) <= limit {
+		return nil
+	}
 	keep := all[len(all)-max:]
-	return s.rewriteLocked(keep)
+	if err := s.rewriteLocked(keep); err != nil {
+		return err
+	}
+	s.lines = len(keep)
+	return nil
 }
 
 func (s *Store) rewriteLocked(keep []event.Event) error {

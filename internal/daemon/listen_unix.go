@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // socketPath is the unix socket the daemon binds.
@@ -42,7 +43,11 @@ func listen(dir string) (net.Listener, string, error) {
 	return ln, path, nil
 }
 
-// dial connects to a daemon socket.
-func dial(addr string) (net.Conn, error) {
-	return net.Dial("unix", addr)
+// dial connects to a daemon socket, giving up after timeout.
+//
+// The bound belongs to the dialler rather than to a race against a timer: a
+// dial abandoned by a timer still completes, and the connection it produced
+// has nobody left to close it.
+func dial(addr string, timeout time.Duration) (net.Conn, error) {
+	return net.DialTimeout("unix", addr, timeout)
 }

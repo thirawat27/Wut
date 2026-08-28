@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"time"
 
@@ -111,7 +110,7 @@ func (c *Client) call(ctx context.Context, req Request, timeout time.Duration) (
 		return Response{}, ErrVersionMismatch
 	}
 
-	conn, err := dialWithTimeout(hs.Socket, connectTimeout)
+	conn, err := dial(hs.Socket, connectTimeout)
 	if err != nil {
 		return Response{}, ErrUnavailable
 	}
@@ -136,24 +135,6 @@ func (c *Client) call(ctx context.Context, req Request, timeout time.Duration) (
 		return resp, fmt.Errorf("daemon: %s", resp.Error)
 	}
 	return resp, nil
-}
-
-func dialWithTimeout(addr string, timeout time.Duration) (net.Conn, error) {
-	type result struct {
-		conn net.Conn
-		err  error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		conn, err := dial(addr)
-		ch <- result{conn, err}
-	}()
-	select {
-	case r := <-ch:
-		return r.conn, r.err
-	case <-time.After(timeout):
-		return nil, errors.New("connect timed out")
-	}
 }
 
 func readHandshake(dir string) (handshakeFile, error) {

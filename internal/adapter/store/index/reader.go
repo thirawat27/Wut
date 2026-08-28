@@ -359,3 +359,17 @@ func decodeUnits(blob []byte, count int) ([]unit, error) {
 	}
 	return out, nil
 }
+
+// pageMeta returns a page's lowercased name and platform without decoding it.
+//
+// The names section already holds exactly this, one entry per page in page
+// order, so answering from it costs an index rather than a flate stream and a
+// JSON decode. Scoring asks once per candidate unit, which on a broad query is
+// tens of thousands of times.
+func (r *Reader) pageMeta(page uint32) (name string, platform knowledge.Platform, ok bool) {
+	if int(page) >= len(r.names) {
+		return "", "", false
+	}
+	entry := r.names[page]
+	return nameOf(entry), knowledge.Platform(platformOf(entry)), true
+}

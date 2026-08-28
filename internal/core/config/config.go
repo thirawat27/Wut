@@ -12,6 +12,8 @@ package config
 
 import (
 	"fmt"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -153,6 +155,12 @@ func (c Config) Validate() error {
 	if _, err := ParseBytes(c.Model.MaxRSS); err != nil {
 		return fmt.Errorf("model.max_rss: %w", err)
 	}
+	if err := ValidateLocalURL(c.Model.Ollama); err != nil {
+		return fmt.Errorf("model.ollama: %w", err)
+	}
+	if err := ValidateAlias(c.Shell.Alias); err != nil {
+		return fmt.Errorf("shell.alias: %w", err)
+	}
 	return nil
 }
 
@@ -248,4 +256,85 @@ func ParseBytes(s string) (int64, error) {
 		return 0, fmt.Errorf("%q is negative", s)
 	}
 	return int64(f * float64(mult)), nil
+}
+
+// aliasPattern is what an extra trigger word may look like.
+//
+// The alias is not data at runtime: it is interpolated into generated shell
+// code as a *function name*, in a position no quoting can make safe. In every
+// shell WUT supports, `foo() { ... }` and `foo; rm -rf ~ #() { ... }` are one
+// statement and two. So the value is constrained to what a function name may
+// actually be, and anything else is refused before a byte reaches a startup
+// file.
+var aliasPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,31}$`)
+
+// ValidateAlias reports why an alias may not be used, or nil.
+//
+// An empty alias is valid: it means "no extra trigger word", which is the
+// default.
+func ValidateAlias(s string) error {
+	if s == "" {
+		return nil
+	}
+	if !aliasPattern.MatchString(s) {
+		return fmt.Errorf("%q is not usable as a shell function name: "+
+			"start with a letter or underscore, then letters, digits, underscores or hyphens (32 characters at most)", s)
+	}
+	return nil
+}
+
+// loopbackHosts are the only hosts a Tier 2 backend may live on.
+//
+// The privacy position is that command text never leaves the machine. A
+// configurable base URL that accepts any host would undo it silently — the
+// user would see a working model and no indication that every question was
+// being posted to someone else's server. So the restriction is enforced here
+// rather than described in a comment.
+var loopbackHosts = map[string]bool{
+	"localhost": true, "::1": true, "0:0:0:0:0:0:0:1": true,
+}
+
+// isLoopbackHost reports a host that can only mean this machine.
+//
+// Spelled out rather than delegating to net.ParseIP because this package does
+// not import the network stack — see the architecture test. The set of things
+// that mean "here" is small, fixed, and worth writing down.
+func isLoopbackHost(host string) bool {
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	if loopbackHosts[host] {
+		return true
+	}
+	// The whole of 127.0.0.0/8 is loopback.
+	octets := strings.Split(host, ".")
+	if len(octets) != 4 || octets[0] != "127" {
+		return false
+	}
+	for _, o := range octets {
+		n, err := strconv.Atoi(o)
+		if err != nil || n < 0 || n > 255 {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidateLocalURL reports why a model backend URL may not be used, or nil.
+func ValidateLocalURL(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%q is not a URL: %w", raw, err)
+	}
+	switch u.Scheme {
+	case "http", "https":
+	default:
+		return fmt.Errorf("%q must be an http or https URL", raw)
+	}
+	if !isLoopbackHost(u.Hostname()) {
+		return fmt.Errorf("%q is not on this machine: a local model must be on 127.0.0.1, ::1, or localhost, "+
+			"because WUT never sends what you typed to another host", raw)
+	}
+	return nil
 }

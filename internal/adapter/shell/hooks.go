@@ -55,7 +55,10 @@ func renderBash(p Params) string {
   # rather than paying a fork for date(1) on every prompt.
   __wut_setms() {
     if [ -n "${EPOCHREALTIME:-}" ]; then
-      local __e=${EPOCHREALTIME/./}
+      # The separator is locale-dependent: LC_NUMERIC=de_DE gives a comma,
+      # and removing only "." left a comma inside an arithmetic expansion,
+      # which is a syntax error on every prompt.
+      local __e=${EPOCHREALTIME/[.,]/}
       __wut_ms=$(( 10#${__e:0:16} / 1000 ))
     else
       __wut_ms=0
@@ -306,7 +309,10 @@ func renderPowerShell(p Params) string {
   $global:WutSeq = 0
   $global:WutLastId = -1
   $global:WutNotFound = ''
-  $global:WutInnerPrompt = $function:prompt
+  # Capture the *original* prompt once. Without the guard, dot-sourcing the
+  # profile again (". $PROFILE", or a second install) wraps WUT's own wrapper,
+  # and the next prompt recurses until PowerShell runs out of stack.
+  if (-not $global:WutInnerPrompt) { $global:WutInnerPrompt = $function:prompt }
 
   # T0.5 — the name of a command that was not found.
   #
@@ -483,7 +489,7 @@ func renderElvish(p Params) string {
   if (not (has-env WUT_SESSION)) {
     set-env WUT_SESSION "e"(randint 100000 999999)
   }
-  var wut-rec = ` + shQuote(p.SessionsDir) + `/$E:WUT_SESSION".rec"
+  var wut-rec = ` + elvQuote(p.SessionsDir) + `/$E:WUT_SESSION".rec"
   var wut-seq = 0
 
   set edit:after-command = [$@edit:after-command {|m|
@@ -553,6 +559,20 @@ func nuQuote(s string) string {
 	return `"` + strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), `"`, `\"`) + `"`
 }
 
+// elvQuote single-quotes for Elvish, where a literal quote is doubled.
+//
+// Elvish is not a POSIX shell. It has no backslash escape inside single
+// quotes, so the POSIX '\” idiom does not produce a quote there: it ends the
+// string and leaves a stray backslash, which is a parse error at shell start.
+func elvQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// pyQuote double-quotes for Python, which is what xonsh embeds.
+//
+// Not a raw string: a raw string keeps the backslash of an escaped quote, and
+// one that ends in a backslash - every Windows directory path - cannot be
+// written as a raw string at all.
 func pyQuote(s string) string {
-	return `r"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
