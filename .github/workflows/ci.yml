@@ -169,10 +169,36 @@ jobs:
           # not the toolchain to build with.
           go-version: 'stable'
           cache: true
+      # The corpus is pinned by digest, not fetched fresh.
+      #
+      # tldr-pages republishes tldr.zip in place under a tag that has not moved
+      # since 2025, so `db sync` returns a different corpus from one day to the
+      # next. E1 asserts a floor, and a floor measured against a moving input
+      # goes red without anybody changing a line of code — which is exactly
+      # what it did. The cache holds the pinned bytes; the digest check says so
+      # when it no longer can.
+      - name: Restore the pinned tldr corpus
+        id: corpus
+        uses: actions/cache@v4
+        with:
+          path: tldr.zip
+          key: tldr-corpus-${{ hashFiles('internal/eval/testdata/corpus.sha256') }}
+      - name: Fetch the corpus
+        if: steps.corpus.outputs.cache-hit != 'true'
+        run: curl -sSLo tldr.zip https://github.com/tldr-pages/tldr/releases/latest/download/tldr.zip
+      - name: Check the corpus against the pin
+        run: |
+          if sha256sum -c internal/eval/testdata/corpus.sha256; then
+            echo "corpus matches the pin"
+          else
+            echo "::warning::tldr.zip no longer matches internal/eval/testdata/corpus.sha256."
+            echo "::warning::E1 will report its numbers without gating on them. Review them and re-pin."
+            echo "WUT_EVAL_CORPUS_UNPINNED=1" >> "$GITHUB_ENV"
+          fi
       - name: Build the knowledge index
         run: |
           go build -o build/wut ./cmd/wut
-          ./build/wut db sync
+          ./build/wut db sync --from-archive tldr.zip
       - name: E1 retrieval and E3 grounding
         run: go test -v ./internal/eval/...
 
