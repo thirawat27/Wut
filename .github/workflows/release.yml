@@ -27,7 +27,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # GoReleaser derives the changelog from history, so a shallow clone
           # produces a release whose notes are silently empty.
