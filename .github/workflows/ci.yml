@@ -179,7 +179,7 @@ jobs:
       # when it no longer can.
       - name: Restore the pinned tldr corpus
         id: corpus
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: tldr.zip
           key: tldr-corpus-${{ hashFiles('internal/eval/testdata/corpus.sha256') }}
